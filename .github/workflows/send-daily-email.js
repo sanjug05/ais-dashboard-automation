@@ -1,11 +1,9 @@
 // send-daily-email.js
-const emailjs = require('@emailjs/nodejs');
+// Uses EmailJS REST API directly - no npm packages needed
 
-// Your EmailJS configuration (from GitHub Secrets)
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
-const PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY;  // You'll need to add this secret
 const MANUAL_RECIPIENT = process.env.MANUAL_RECIPIENT;
 
 // Default recipients - UPDATE THESE WITH YOUR 4 EMAIL ADDRESSES
@@ -16,10 +14,9 @@ const DEFAULT_RECIPIENTS = [
   'nidhi.tivari@aisglass.com'    // <-- Replace with actual email
 ];
 
-// Function to get current metrics (you can expand this later)
+// Function to get current metrics
 async function getDashboardMetrics() {
-  // For now using sample data
-  // TODO: Add Firebase fetching logic if needed
+  // You can modify this to fetch from Firebase if needed
   return {
     total_showrooms: 24,
     completed_showrooms: 0,
@@ -32,7 +29,7 @@ async function getDashboardMetrics() {
   };
 }
 
-// Function to send email
+// Function to send email using EmailJS REST API
 async function sendEmail(recipient, metrics, reportType = 'Daily Summary') {
   const templateParams = {
     to_email: recipient,
@@ -53,17 +50,27 @@ async function sendEmail(recipient, metrics, reportType = 'Daily Summary') {
   console.log(`📧 Sending email to: ${recipient}`);
 
   try {
-    const response = await emailjs.send(
-      SERVICE_ID,
-      TEMPLATE_ID,
-      templateParams,
-      {
-        publicKey: PUBLIC_KEY,
-        privateKey: PRIVATE_KEY
-      }
-    );
-    console.log(`✅ Email sent successfully to ${recipient}`);
-    return { success: true, recipient };
+    const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        service_id: SERVICE_ID,
+        template_id: TEMPLATE_ID,
+        user_id: PUBLIC_KEY,
+        template_params: templateParams
+      })
+    });
+
+    if (response.ok) {
+      console.log(`✅ Email sent successfully to ${recipient}`);
+      return { success: true, recipient };
+    } else {
+      const errorText = await response.text();
+      console.error(`❌ Failed to send to ${recipient}: HTTP ${response.status} - ${errorText}`);
+      return { success: false, recipient, error: `HTTP ${response.status}: ${errorText}` };
+    }
   } catch (error) {
     console.error(`❌ Failed to send to ${recipient}:`, error.message);
     return { success: false, recipient, error: error.message };
@@ -76,13 +83,16 @@ async function main() {
   console.log(`Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
   
   // Check if required secrets are available
-  if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) {
+  if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY) {
     console.error('❌ Missing EmailJS credentials!');
-    console.error('Please ensure EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, EMAILJS_PUBLIC_KEY, and EMAILJS_PRIVATE_KEY are set in GitHub Secrets');
+    console.error('Please ensure EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, and EMAILJS_PUBLIC_KEY are set in GitHub Secrets');
     process.exit(1);
   }
   
   console.log('✅ EmailJS credentials found');
+  console.log(`Service ID: ${SERVICE_ID}`);
+  console.log(`Template ID: ${TEMPLATE_ID}`);
+  console.log(`Public Key: ${PUBLIC_KEY.substring(0, 5)}...`);
   
   // Get dashboard metrics
   const metrics = await getDashboardMetrics();
@@ -104,6 +114,7 @@ async function main() {
   for (const recipient of recipients) {
     const result = await sendEmail(recipient, metrics);
     results.push(result);
+    // Small delay to avoid rate limiting
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
   
