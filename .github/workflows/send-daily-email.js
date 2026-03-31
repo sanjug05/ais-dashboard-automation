@@ -1,24 +1,25 @@
 // send-daily-email.js
-const emailjs = require('@emailjs/browser');
+const emailjs = require('@emailjs/nodejs');
 
 // Your EmailJS configuration (from GitHub Secrets)
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
+const PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY;  // You'll need to add this secret
 const MANUAL_RECIPIENT = process.env.MANUAL_RECIPIENT;
 
-// Default recipients - update these with your 4 email addresses
+// Default recipients - UPDATE THESE WITH YOUR 4 EMAIL ADDRESSES
 const DEFAULT_RECIPIENTS = [
-  'nidhi.tivari@aisglass.com',
-  'mayank.tomar@aisglass.com',
-  'krishna.varma@aisglass.com',
-  'sanju.gupta@aisglass.com'
+  'email1@company.com',   // <-- Replace with actual email
+  'email2@company.com',   // <-- Replace with actual email
+  'email3@company.com',   // <-- Replace with actual email
+  'email4@company.com'    // <-- Replace with actual email
 ];
 
 // Function to get current metrics (you can expand this later)
 async function getDashboardMetrics() {
-  // Since this is a standalone script, we'll use sample data
-  // You can modify this to fetch from Firebase if needed
+  // For now using sample data
+  // TODO: Add Firebase fetching logic if needed
   return {
     total_showrooms: 24,
     completed_showrooms: 0,
@@ -46,24 +47,26 @@ async function sendEmail(recipient, metrics, reportType = 'Daily Summary') {
     active_dealers: metrics.active_dealers,
     onboarded_dealers: metrics.onboarded_dealers,
     delayed_dealers: metrics.delayed_dealers,
-    delayed_list: '' // Empty for daily summary
+    delayed_list: ''
   };
 
-  console.log(`Sending email to: ${recipient}`);
-  console.log('Template params:', templateParams);
+  console.log(`📧 Sending email to: ${recipient}`);
 
   try {
     const response = await emailjs.send(
       SERVICE_ID,
       TEMPLATE_ID,
       templateParams,
-      PUBLIC_KEY
+      {
+        publicKey: PUBLIC_KEY,
+        privateKey: PRIVATE_KEY
+      }
     );
     console.log(`✅ Email sent successfully to ${recipient}`);
     return { success: true, recipient };
   } catch (error) {
-    console.error(`❌ Failed to send to ${recipient}:`, error.text || error.message);
-    return { success: false, recipient, error: error.text || error.message };
+    console.error(`❌ Failed to send to ${recipient}:`, error.message);
+    return { success: false, recipient, error: error.message };
   }
 }
 
@@ -73,9 +76,9 @@ async function main() {
   console.log(`Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
   
   // Check if required secrets are available
-  if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY) {
+  if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) {
     console.error('❌ Missing EmailJS credentials!');
-    console.error('Please ensure EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, and EMAILJS_PUBLIC_KEY are set in GitHub Secrets');
+    console.error('Please ensure EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, EMAILJS_PUBLIC_KEY, and EMAILJS_PRIVATE_KEY are set in GitHub Secrets');
     process.exit(1);
   }
   
@@ -89,11 +92,9 @@ async function main() {
   let recipients = [];
   
   if (MANUAL_RECIPIENT && MANUAL_RECIPIENT.trim()) {
-    // Manual trigger with custom recipient
     recipients = [MANUAL_RECIPIENT];
     console.log(`📧 Manual trigger - sending to: ${MANUAL_RECIPIENT}`);
   } else {
-    // Daily automatic run - send to all 4 recipients
     recipients = DEFAULT_RECIPIENTS;
     console.log(`📧 Daily run - sending to ${recipients.length} recipients:`, recipients);
   }
@@ -103,7 +104,6 @@ async function main() {
   for (const recipient of recipients) {
     const result = await sendEmail(recipient, metrics);
     results.push(result);
-    // Small delay to avoid rate limiting
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
   
