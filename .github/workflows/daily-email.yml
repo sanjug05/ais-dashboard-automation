@@ -5,6 +5,11 @@ on:
     # Runs at 9:00 AM IST (3:30 AM UTC) daily
     - cron: '30 3 * * *'
   workflow_dispatch:
+    inputs:
+      manual_recipient:
+        description: 'Send to specific email (leave blank for default)'
+        required: false
+        type: string
 
 jobs:
   send-report:
@@ -17,10 +22,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'  # Using Node 22 for better compatibility
-      
-      - name: Install dependencies
-        run: npm install
+          node-version: '22'
       
       - name: Send Daily Email Report
         run: node send-daily-email.js
@@ -28,5 +30,4 @@ jobs:
           EMAILJS_SERVICE_ID: ${{ secrets.EMAILJS_SERVICE_ID }}
           EMAILJS_TEMPLATE_ID: ${{ secrets.EMAILJS_TEMPLATE_ID }}
           EMAILJS_PUBLIC_KEY: ${{ secrets.EMAILJS_PUBLIC_KEY }}
-          EMAILJS_PRIVATE_KEY: ${{ secrets.EMAILJS_PRIVATE_KEY }}
           MANUAL_RECIPIENT: ${{ github.event.inputs.manual_recipient }}
