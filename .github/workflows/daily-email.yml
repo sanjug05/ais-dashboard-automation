@@ -31,3 +31,8 @@ jobs:
           EMAILJS_TEMPLATE_ID: ${{ secrets.EMAILJS_TEMPLATE_ID }}
           EMAILJS_PUBLIC_KEY: ${{ secrets.EMAILJS_PUBLIC_KEY }}
           MANUAL_RECIPIENT: ${{ github.event.inputs.manual_recipient }}
+          - name: Debug credentials
+  run: |
+    echo "Service ID exists: ${{ secrets.EMAILJS_SERVICE_ID != '' }}"
+    echo "Template ID exists: ${{ secrets.EMAILJS_TEMPLATE_ID != '' }}"
+    echo "Public Key exists: ${{ secrets.EMAILJS_PUBLIC_KEY != '' }}"
