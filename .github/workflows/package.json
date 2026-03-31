@@ -6,7 +6,5 @@
   "scripts": {
     "start": "node send-daily-email.js"
   },
-  "dependencies": {
-    "@emailjs/nodejs": "^2.0.0"
-  }
+  "dependencies": {}
 }
