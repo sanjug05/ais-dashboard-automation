@@ -9,10 +9,10 @@ const MANUAL_RECIPIENT = process.env.MANUAL_RECIPIENT;
 
 // Default recipients - update these with your 4 email addresses
 const DEFAULT_RECIPIENTS = [
-  'email1@company.com',
-  'email2@company.com',
-  'email3@company.com',
-  'email4@company.com'
+  'nidhi.tivari@aisglass.com',
+  'mayank.tomar@aisglass.com',
+  'krishna.varma@aisglass.com',
+  'sanju.gupta@aisglass.com'
 ];
 
 // Function to get current metrics (you can expand this later)
