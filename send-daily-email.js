@@ -2,7 +2,7 @@
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
-const PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY;  
+const PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY;
 const MANUAL_RECIPIENT = process.env.MANUAL_RECIPIENT;
 
 const DEFAULT_RECIPIENTS = [
@@ -15,17 +15,16 @@ const DEFAULT_RECIPIENTS = [
 console.log('🚀 Starting daily email report...');
 console.log(`Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
 
-if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY) {
+if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) {
   console.error('❌ Missing EmailJS credentials!');
   console.error('SERVICE_ID exists:', !!SERVICE_ID);
   console.error('TEMPLATE_ID exists:', !!TEMPLATE_ID);
   console.error('PUBLIC_KEY exists:', !!PUBLIC_KEY);
+  console.error('PRIVATE_KEY exists:', !!PRIVATE_KEY);
   process.exit(1);
 }
 
 console.log('✅ EmailJS credentials found');
-console.log(`Service ID: ${SERVICE_ID}`);
-console.log(`Template ID: ${TEMPLATE_ID}`);
 
 async function sendEmail(recipient) {
   const templateParams = {
@@ -48,12 +47,14 @@ async function sendEmail(recipient) {
   try {
     const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify({
         service_id: SERVICE_ID,
         template_id: TEMPLATE_ID,
         user_id: PUBLIC_KEY,
-        accessToken: PRIVATE_KEY
+        accessToken: PRIVATE_KEY,
         template_params: templateParams
       })
     });
