@@ -2,7 +2,6 @@ name: Daily Email Report
 
 on:
   schedule:
-    # Runs at 9:00 AM IST (3:30 AM UTC) daily
     - cron: '30 3 * * *'
   workflow_dispatch:
     inputs:
@@ -23,12 +22,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      
-      - name: Debug credentials
-        run: |
-          echo "Service ID exists: ${{ secrets.EMAILJS_SERVICE_ID != '' }}"
-          echo "Template ID exists: ${{ secrets.EMAILJS_TEMPLATE_ID != '' }}"
-          echo "Public Key exists: ${{ secrets.EMAILJS_PUBLIC_KEY != '' }}"
       
       - name: Send Daily Email Report
         run: node send-daily-email.js
