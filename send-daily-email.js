@@ -9,7 +9,7 @@ const DEFAULT_RECIPIENTS = [
   'sanju.gupta@aisglass.com',
   'mayank.tomar@aisglass.com',
   'krishna.verma@aisglass.com',
-  'nidhi.tivari@aisglass.com'
+  'nidhi.tiwari@aisglass.com'
 ];
 
 // Check if today is a holiday (Sunday or 2nd/4th Saturday)
