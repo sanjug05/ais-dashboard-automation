@@ -1,51 +1,97 @@
+// send-daily-email.js
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
 const MANUAL_RECIPIENT = process.env.MANUAL_RECIPIENT;
 
-// Default recipients - UPDATE THESE WITH YOUR 4 EMAIL ADDRESSES
 const DEFAULT_RECIPIENTS = [
-  'sanju.gupta@aisglass.com',   // <-- Replace with actual email
-  'mayank.tomar@aisglass.com',   // <-- Replace with actual email
-  'krishna.varma@aisglass.com',   // <-- Replace with actual email
-  'nidhi.tivari@aisglass.com'    // <-- Replace with actual email
+  'sanju.gupta@aisglass.com',
+  'mayank.tomar@aisglass.com',
+  'krishna.varma@aisglass.com',
+  'nidhi.tivari@aisglass.com'
 ];
 
-console.log('🚀 Starting...');
-console.log('SERVICE_ID:', SERVICE_ID ? '✅' : '❌');
-console.log('TEMPLATE_ID:', TEMPLATE_ID ? '✅' : '❌');
-console.log('PUBLIC_KEY:', PUBLIC_KEY ? '✅' : '❌');
+console.log('🚀 Starting daily email report...');
+console.log(`Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
 
 if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY) {
-  console.error('❌ Missing credentials');
+  console.error('❌ Missing EmailJS credentials!');
+  console.error('SERVICE_ID exists:', !!SERVICE_ID);
+  console.error('TEMPLATE_ID exists:', !!TEMPLATE_ID);
+  console.error('PUBLIC_KEY exists:', !!PUBLIC_KEY);
   process.exit(1);
 }
 
+console.log('✅ EmailJS credentials found');
+console.log(`Service ID: ${SERVICE_ID}`);
+console.log(`Template ID: ${TEMPLATE_ID}`);
+
 async function sendEmail(recipient) {
-  const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      service_id: SERVICE_ID,
-      template_id: TEMPLATE_ID,
-      user_id: PUBLIC_KEY,
-      template_params: {
-        to_email: recipient,
-        date: new Date().toLocaleString(),
-        report_type: 'Test',
-        notes: 'Test email'
-      }
-    })
-  });
-  return response.ok;
+  const templateParams = {
+    to_email: recipient,
+    date: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+    report_type: 'Daily Summary',
+    notes: 'Automated daily report from AIS Command Center',
+    total_showrooms: 24,
+    completed_showrooms: 0,
+    avg_completion: 20,
+    delayed_showrooms: 23,
+    total_dealers: 0,
+    active_dealers: 0,
+    onboarded_dealers: 0,
+    delayed_dealers: 0
+  };
+
+  console.log(`📧 Sending to: ${recipient}`);
+
+  try {
+    const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        service_id: SERVICE_ID,
+        template_id: TEMPLATE_ID,
+        user_id: PUBLIC_KEY,
+        template_params: templateParams
+      })
+    });
+
+    if (response.ok) {
+      console.log(`✅ Success: ${recipient}`);
+      return true;
+    } else {
+      const errorText = await response.text();
+      console.error(`❌ Failed: ${recipient} - HTTP ${response.status}: ${errorText}`);
+      return false;
+    }
+  } catch (error) {
+    console.error(`❌ Error: ${recipient} - ${error.message}`);
+    return false;
+  }
 }
 
 async function main() {
-  const recipient = MANUAL_RECIPIENT || 'test@example.com';
-  console.log(`📧 Sending to: ${recipient}`);
-  const success = await sendEmail(recipient);
-  console.log(success ? '✅ Sent!' : '❌ Failed');
-  if (!success) process.exit(1);
+  let recipients = MANUAL_RECIPIENT && MANUAL_RECIPIENT.trim() 
+    ? [MANUAL_RECIPIENT] 
+    : DEFAULT_RECIPIENTS;
+  
+  console.log(`📧 Sending to ${recipients.length} recipients`);
+  
+  let successCount = 0;
+  for (const recipient of recipients) {
+    if (await sendEmail(recipient)) successCount++;
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  
+  console.log(`\n📬 Done: ${successCount}/${recipients.length} successful`);
+  if (successCount === 0) {
+    console.error('❌ No emails were sent successfully');
+    process.exit(1);
+  }
+  console.log('🎉 All emails sent successfully!');
 }
 
-main().catch(err => { console.error(err); process.exit(1); });
+main().catch(err => { 
+  console.error('Script error:', err); 
+  process.exit(1); 
+});
