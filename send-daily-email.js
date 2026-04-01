@@ -2,6 +2,7 @@
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
+const PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY;  
 const MANUAL_RECIPIENT = process.env.MANUAL_RECIPIENT;
 
 const DEFAULT_RECIPIENTS = [
@@ -52,6 +53,7 @@ async function sendEmail(recipient) {
         service_id: SERVICE_ID,
         template_id: TEMPLATE_ID,
         user_id: PUBLIC_KEY,
+        accessToken: PRIVATE_KEY
         template_params: templateParams
       })
     });
