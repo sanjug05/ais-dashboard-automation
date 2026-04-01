@@ -12,8 +12,45 @@ const DEFAULT_RECIPIENTS = [
   'nidhi.tivari@aisglass.com'
 ];
 
+// Check if today is a holiday (Sunday or 2nd/4th Saturday)
+function isHoliday() {
+  const today = new Date();
+  const day = today.getDay(); // 0 = Sunday, 6 = Saturday
+  const date = today.getDate();
+  
+  // Check if it's Sunday
+  if (day === 0) {
+    console.log(`📅 ${today.toDateString()} is a Sunday (Holiday)`);
+    return true;
+  }
+  
+  // Check if it's Saturday
+  if (day === 6) {
+    // Calculate which Saturday of the month
+    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const firstSaturday = firstDayOfMonth.getDay() === 6 ? 1 : 7 - firstDayOfMonth.getDay();
+    const saturdayCount = Math.ceil((date - firstSaturday + 1) / 7);
+    
+    // Exclude 2nd and 4th Saturdays
+    if (saturdayCount === 2 || saturdayCount === 4) {
+      console.log(`📅 ${today.toDateString()} is the ${saturdayCount}nd/4th Saturday (Holiday)`);
+      return true;
+    }
+    console.log(`📅 ${today.toDateString()} is the ${saturdayCount}st/rd Saturday (Working day)`);
+  }
+  
+  return false;
+}
+
 console.log('🚀 Starting daily email report...');
 console.log(`Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+
+// Check if it's a holiday (only for automated runs, manual runs still work)
+if (!MANUAL_RECIPIENT && isHoliday()) {
+  console.log('📅 Today is a holiday. Skipping automated email report.');
+  console.log('✅ Exiting gracefully...');
+  process.exit(0);
+}
 
 if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) {
   console.error('❌ Missing EmailJS credentials!');
