@@ -8,7 +8,7 @@ const MANUAL_RECIPIENT = process.env.MANUAL_RECIPIENT;
 const DEFAULT_RECIPIENTS = [
   'sanju.gupta@aisglass.com',
   'mayank.tomar@aisglass.com',
-  'krishna.varma@aisglass.com',
+  'krishna.verma@aisglass.com',
   'nidhi.tivari@aisglass.com'
 ];
 
