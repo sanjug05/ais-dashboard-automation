@@ -1,5 +1,4 @@
-# Updated
-name: Daily Email Report
+ name: Daily Email Report
 
 on:
   schedule:
