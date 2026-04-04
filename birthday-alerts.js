@@ -3,10 +3,10 @@ const { google } = require('googleapis');
 const emailjs = require('@emailjs/nodejs');
 
 // EmailJS credentials
-const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
-const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
-const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
-const PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY;
+const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
+const EMAILJS_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
+const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
+const EMAILJS_PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY;
 const MANUAL_RECIPIENT = process.env.MANUAL_RECIPIENT;
 
 // Default recipients
@@ -24,10 +24,10 @@ const CONFIG = {
   FOLLOW_UP_THRESHOLD_DAYS: 3
 };
 
-// Google Sheets credentials
-const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
-const SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-const PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+// Google Sheets credentials (renamed to avoid conflict)
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
+const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
 // Check if today is a holiday (Sunday or 2nd/4th Saturday)
 function isHoliday() {
@@ -115,16 +115,16 @@ function findColumn(headers, keywords) {
 // Get data from Google Sheet
 async function getSheetData() {
   const auth = new google.auth.JWT(
-    SERVICE_ACCOUNT_EMAIL,
+    GOOGLE_SERVICE_ACCOUNT_EMAIL,
     null,
-    PRIVATE_KEY,
+    GOOGLE_PRIVATE_KEY,
     ['https://www.googleapis.com/auth/spreadsheets.readonly']
   );
 
   const sheets = google.sheets({ version: 'v4', auth });
   
   const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId: GOOGLE_SHEET_ID,
     range: `${CONFIG.SHEET_NAME}!A:ZZ`,
   });
 
@@ -256,12 +256,12 @@ function buildHtmlReport(alerts, dateStr) {
       
       for (const item of cat.data) {
         const dateVal = item[cat.dateField];
-        const dateStr = dateVal ? formatDate(dateVal) : '—';
+        const dateStrDisplay = dateVal ? formatDate(dateVal) : '—';
         html += `<tr style="background-color: #f9f9f9;">
           <td ${style}>${item.name}</td>
           <td ${style}>${item.city}</td>
           <td ${style}>${item.rm}</td>
-          <td ${style}>${dateStr}${cat.extra ? cat.extra(item) : ''}</td>
+          <td ${style}>${dateStrDisplay}${cat.extra ? cat.extra(item) : ''}</td>
         </tr>`;
       }
       html += `</tbody></table>`;
@@ -295,10 +295,10 @@ async function sendEmail(recipient, htmlBody, dateStr) {
 
   try {
     const response = await emailjs.send(
-      SERVICE_ID,
-      TEMPLATE_ID,
+      EMAILJS_SERVICE_ID,
+      EMAILJS_TEMPLATE_ID,
       templateParams,
-      { publicKey: PUBLIC_KEY, privateKey: PRIVATE_KEY }
+      { publicKey: EMAILJS_PUBLIC_KEY, privateKey: EMAILJS_PRIVATE_KEY }
     );
     console.log(`✅ Success: ${recipient}`);
     return true;
@@ -321,21 +321,21 @@ async function main() {
   }
   
   // Check EmailJS credentials
-  if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) {
+  if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY || !EMAILJS_PRIVATE_KEY) {
     console.error('❌ Missing EmailJS credentials!');
-    console.error('SERVICE_ID:', !!SERVICE_ID);
-    console.error('TEMPLATE_ID:', !!TEMPLATE_ID);
-    console.error('PUBLIC_KEY:', !!PUBLIC_KEY);
-    console.error('PRIVATE_KEY:', !!PRIVATE_KEY);
+    console.error('SERVICE_ID:', !!EMAILJS_SERVICE_ID);
+    console.error('TEMPLATE_ID:', !!EMAILJS_TEMPLATE_ID);
+    console.error('PUBLIC_KEY:', !!EMAILJS_PUBLIC_KEY);
+    console.error('PRIVATE_KEY:', !!EMAILJS_PRIVATE_KEY);
     process.exit(1);
   }
   
   // Check Google Sheets credentials
-  if (!SPREADSHEET_ID || !SERVICE_ACCOUNT_EMAIL || !PRIVATE_KEY) {
+  if (!GOOGLE_SHEET_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY) {
     console.error('❌ Missing Google Sheets credentials!');
-    console.error('SPREADSHEET_ID:', !!SPREADSHEET_ID);
-    console.error('SERVICE_ACCOUNT_EMAIL:', !!SERVICE_ACCOUNT_EMAIL);
-    console.error('PRIVATE_KEY:', !!PRIVATE_KEY);
+    console.error('SHEET_ID:', !!GOOGLE_SHEET_ID);
+    console.error('SERVICE_ACCOUNT_EMAIL:', !!GOOGLE_SERVICE_ACCOUNT_EMAIL);
+    console.error('PRIVATE_KEY:', !!GOOGLE_PRIVATE_KEY);
     process.exit(1);
   }
   
