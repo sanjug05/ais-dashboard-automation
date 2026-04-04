@@ -1,9 +1,6 @@
 name: Birthday & Anniversary Alerts
 
 on:
-  schedule:
-    # Runs at 9:30 AM IST (4:00 AM UTC) daily
-    - cron: '0 4 * * *'
   workflow_dispatch:
     inputs:
       manual_recipient:
@@ -27,13 +24,10 @@ jobs:
       - name: Install dependencies
         run: npm install googleapis @emailjs/nodejs
       
-      - name: Run birthday alerts
-        run: node birthday-alerts.js
+      - name: Test EmailJS
+        run: node test-email.js
         env:
-          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           EMAILJS_SERVICE_ID: ${{ secrets.EMAILJS_SERVICE_ID }}
           EMAILJS_TEMPLATE_ID: ${{ secrets.EMAILJS_TEMPLATE_ID }}
           EMAILJS_PUBLIC_KEY: ${{ secrets.EMAILJS_PUBLIC_KEY }}
           EMAILJS_PRIVATE_KEY: ${{ secrets.EMAILJS_PRIVATE_KEY }}
-          MANUAL_RECIPIENT: ${{ github.event.inputs.manual_recipient }}
