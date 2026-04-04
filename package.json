@@ -1,0 +1,10 @@
+{
+  "name": "birthday-alerts",
+  "version": "1.0.0",
+  "description": "Automated birthday and anniversary alerts from Google Sheets",
+  "main": "birthday-alerts.js",
+  "dependencies": {
+    "googleapis": "^134.0.0",
+    "@emailjs/nodejs": "^2.0.0"
+  }
+}
