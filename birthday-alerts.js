@@ -24,10 +24,23 @@ const CONFIG = {
   FOLLOW_UP_THRESHOLD_DAYS: 3
 };
 
-// Google Sheets credentials (renamed to avoid conflict)
+// Google Sheets credentials - FIXED PRIVATE KEY HANDLING
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-const GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+// Handle private key properly - replace escaped newlines and ensure correct format
+let GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
+if (GOOGLE_PRIVATE_KEY) {
+  // Replace escaped newlines with actual newlines
+  GOOGLE_PRIVATE_KEY = GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
+  // Ensure it starts with -----BEGIN PRIVATE KEY-----
+  if (!GOOGLE_PRIVATE_KEY.includes('-----BEGIN PRIVATE KEY-----')) {
+    GOOGLE_PRIVATE_KEY = GOOGLE_PRIVATE_KEY.replace(/-----BEGIN PRIVATE KEY-----\\n/, '-----BEGIN PRIVATE KEY-----\n');
+  }
+  // Ensure it ends with -----END PRIVATE KEY-----
+  if (!GOOGLE_PRIVATE_KEY.includes('-----END PRIVATE KEY-----')) {
+    GOOGLE_PRIVATE_KEY = GOOGLE_PRIVATE_KEY.replace(/\\n-----END PRIVATE KEY-----/, '\n-----END PRIVATE KEY-----');
+  }
+}
 
 // Check if today is a holiday (Sunday or 2nd/4th Saturday)
 function isHoliday() {
@@ -112,101 +125,108 @@ function findColumn(headers, keywords) {
   return -1;
 }
 
-// Get data from Google Sheet
+// Get data from Google Sheet - FIXED AUTH METHOD
 async function getSheetData() {
-  const auth = new google.auth.JWT(
-    GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    null,
-    GOOGLE_PRIVATE_KEY,
-    ['https://www.googleapis.com/auth/spreadsheets.readonly']
-  );
+  try {
+    // Use the service account credentials directly
+    const auth = new google.auth.JWT({
+      email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+      key: GOOGLE_PRIVATE_KEY,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly']
+    });
 
-  const sheets = google.sheets({ version: 'v4', auth });
-  
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: GOOGLE_SHEET_ID,
-    range: `${CONFIG.SHEET_NAME}!A:ZZ`,
-  });
+    const sheets = google.sheets({ version: 'v4', auth });
+    
+    console.log('📡 Authenticating and fetching sheet data...');
+    
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      range: `${CONFIG.SHEET_NAME}!A:ZZ`,
+    });
 
-  const rows = response.data.values;
-  if (!rows || rows.length < 2) {
-    console.log('No data found in sheet');
-    return { birthday: [], anniversary: [], showroomAnniversary: [], expiry: [], followUp: [] };
-  }
-  
-  const headers = rows[0];
-  const dataRows = rows.slice(1);
-  
-  // Find column indices
-  const col = {
-    dealerName: findColumn(headers, ['Channel Partner']),
-    city: findColumn(headers, ['City']),
-    rm: findColumn(headers, ['RM']),
-    expiry: findColumn(headers, ['Last Agreement Date', 'Expiry']),
-    dob: findColumn(headers, ['Date of Birth']),
-    showroomAnniversary: 42, // Column AQ (0-based index)
-    anniversary: findColumn(headers, ['Marriage anniversary']),
-    followUp: findColumn(headers, ['Follow-up Date', 'Next Follow Up']),
-    status: findColumn(headers, ['Status'])
-  };
-  
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  
-  const alerts = {
-    birthday: [],
-    anniversary: [],
-    showroomAnniversary: [],
-    expiry: [],
-    followUp: []
-  };
-  
-  for (const row of dataRows) {
-    const dealerInfo = {
-      name: row[col.dealerName] || 'Unknown Dealer',
-      city: row[col.city] || 'N/A',
-      rm: row[col.rm] || 'N/A',
-      expiry: parseSpecificDate(row[col.expiry]),
-      dob: parseSpecificDate(row[col.dob]),
-      showroomAnniversary: parseSpecificDate(row[col.showroomAnniversary]),
-      anniversary: parseSpecificDate(row[col.anniversary]),
-      followUp: parseSpecificDate(row[col.followUp]),
-      status: row[col.status] || 'N/A'
+    const rows = response.data.values;
+    if (!rows || rows.length < 2) {
+      console.log('No data found in sheet');
+      return { birthday: [], anniversary: [], showroomAnniversary: [], expiry: [], followUp: [] };
+    }
+    
+    const headers = rows[0];
+    const dataRows = rows.slice(1);
+    
+    // Find column indices
+    const col = {
+      dealerName: findColumn(headers, ['Channel Partner']),
+      city: findColumn(headers, ['City']),
+      rm: findColumn(headers, ['RM']),
+      expiry: findColumn(headers, ['Last Agreement Date', 'Expiry']),
+      dob: findColumn(headers, ['Date of Birth']),
+      showroomAnniversary: 42, // Column AQ (0-based index)
+      anniversary: findColumn(headers, ['Marriage anniversary']),
+      followUp: findColumn(headers, ['Follow-up Date', 'Next Follow Up']),
+      status: findColumn(headers, ['Status'])
     };
     
-    // Birthday check
-    if (dealerInfo.dob && isSameDayMonth(dealerInfo.dob, today)) {
-      alerts.birthday.push(dealerInfo);
-    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     
-    // Anniversary check
-    if (dealerInfo.anniversary && isSameDayMonth(dealerInfo.anniversary, today)) {
-      alerts.anniversary.push(dealerInfo);
-    }
+    const alerts = {
+      birthday: [],
+      anniversary: [],
+      showroomAnniversary: [],
+      expiry: [],
+      followUp: []
+    };
     
-    // Showroom Anniversary check
-    if (dealerInfo.showroomAnniversary && isSameDayMonth(dealerInfo.showroomAnniversary, today)) {
-      alerts.showroomAnniversary.push(dealerInfo);
-    }
-    
-    // Expiry check
-    if (dealerInfo.expiry) {
-      const diffDays = Math.ceil((dealerInfo.expiry - today) / (1000 * 60 * 60 * 24));
-      if (diffDays >= 0 && diffDays <= CONFIG.EXPIRY_THRESHOLD_DAYS) {
-        alerts.expiry.push({ ...dealerInfo, daysLeft: diffDays });
+    for (const row of dataRows) {
+      const dealerInfo = {
+        name: row[col.dealerName] || 'Unknown Dealer',
+        city: row[col.city] || 'N/A',
+        rm: row[col.rm] || 'N/A',
+        expiry: parseSpecificDate(row[col.expiry]),
+        dob: parseSpecificDate(row[col.dob]),
+        showroomAnniversary: parseSpecificDate(row[col.showroomAnniversary]),
+        anniversary: parseSpecificDate(row[col.anniversary]),
+        followUp: parseSpecificDate(row[col.followUp]),
+        status: row[col.status] || 'N/A'
+      };
+      
+      // Birthday check
+      if (dealerInfo.dob && isSameDayMonth(dealerInfo.dob, today)) {
+        alerts.birthday.push(dealerInfo);
+      }
+      
+      // Anniversary check
+      if (dealerInfo.anniversary && isSameDayMonth(dealerInfo.anniversary, today)) {
+        alerts.anniversary.push(dealerInfo);
+      }
+      
+      // Showroom Anniversary check
+      if (dealerInfo.showroomAnniversary && isSameDayMonth(dealerInfo.showroomAnniversary, today)) {
+        alerts.showroomAnniversary.push(dealerInfo);
+      }
+      
+      // Expiry check
+      if (dealerInfo.expiry) {
+        const diffDays = Math.ceil((dealerInfo.expiry - today) / (1000 * 60 * 60 * 24));
+        if (diffDays >= 0 && diffDays <= CONFIG.EXPIRY_THRESHOLD_DAYS) {
+          alerts.expiry.push({ ...dealerInfo, daysLeft: diffDays });
+        }
+      }
+      
+      // Follow-up check
+      if (dealerInfo.followUp) {
+        const diffDays = Math.ceil((dealerInfo.followUp - today) / (1000 * 60 * 60 * 24));
+        if (diffDays >= 0 && diffDays <= CONFIG.FOLLOW_UP_THRESHOLD_DAYS) {
+          alerts.followUp.push({ ...dealerInfo, daysLeft: diffDays });
+        }
       }
     }
     
-    // Follow-up check
-    if (dealerInfo.followUp) {
-      const diffDays = Math.ceil((dealerInfo.followUp - today) / (1000 * 60 * 60 * 24));
-      if (diffDays >= 0 && diffDays <= CONFIG.FOLLOW_UP_THRESHOLD_DAYS) {
-        alerts.followUp.push({ ...dealerInfo, daysLeft: diffDays });
-      }
-    }
+    return alerts;
+  } catch (error) {
+    console.error('Error fetching sheet data:', error.message);
+    throw error;
   }
-  
-  return alerts;
 }
 
 // Build HTML email report
@@ -323,19 +343,15 @@ async function main() {
   // Check EmailJS credentials
   if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY || !EMAILJS_PRIVATE_KEY) {
     console.error('❌ Missing EmailJS credentials!');
-    console.error('SERVICE_ID:', !!EMAILJS_SERVICE_ID);
-    console.error('TEMPLATE_ID:', !!EMAILJS_TEMPLATE_ID);
-    console.error('PUBLIC_KEY:', !!EMAILJS_PUBLIC_KEY);
-    console.error('PRIVATE_KEY:', !!EMAILJS_PRIVATE_KEY);
     process.exit(1);
   }
   
   // Check Google Sheets credentials
   if (!GOOGLE_SHEET_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY) {
     console.error('❌ Missing Google Sheets credentials!');
-    console.error('SHEET_ID:', !!GOOGLE_SHEET_ID);
-    console.error('SERVICE_ACCOUNT_EMAIL:', !!GOOGLE_SERVICE_ACCOUNT_EMAIL);
-    console.error('PRIVATE_KEY:', !!GOOGLE_PRIVATE_KEY);
+    console.error('GOOGLE_SHEET_ID:', !!GOOGLE_SHEET_ID);
+    console.error('GOOGLE_SERVICE_ACCOUNT_EMAIL:', !!GOOGLE_SERVICE_ACCOUNT_EMAIL);
+    console.error('GOOGLE_PRIVATE_KEY:', !!GOOGLE_PRIVATE_KEY);
     process.exit(1);
   }
   
@@ -361,7 +377,6 @@ async function main() {
   for (const recipient of recipients) {
     const success = await sendEmail(recipient, htmlBody, dateStr);
     if (success) successCount++;
-    // Wait 2 seconds between emails
     await new Promise(r => setTimeout(r, 2000));
   }
   
