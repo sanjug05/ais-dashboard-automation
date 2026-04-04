@@ -2,7 +2,7 @@
 const { google } = require('googleapis');
 const emailjs = require('@emailjs/nodejs');
 
-// EmailJS credentials (using same template as dashboard)
+// EmailJS credentials
 const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const EMAILJS_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
@@ -209,25 +209,19 @@ async function getSheetData() {
   }
 }
 
-// Build HTML report
+// Build simple HTML report
 function buildHtmlReport(alerts, dateStr) {
   let html = `<!DOCTYPE html>
   <html>
   <head><meta charset="UTF-8"></head>
-  <body style="font-family: Arial, sans-serif; background-color: #f5f5f5; margin: 0; padding: 20px;">
-    <div style="max-width: 800px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
-      <div style="background: linear-gradient(135deg, #C6A43B 0%, #A17F2E 100%); padding: 25px; text-align: center;">
-        <h1 style="color: white; margin: 0;">🎉 AIS Dealer Celebrations & Alerts</h1>
-      </div>
-      <div style="padding: 25px;">
-        <div style="background-color: #f0f0f0; padding: 12px; border-radius: 8px; margin-bottom: 25px; text-align: center;">
-          <strong>📅 Date: ${dateStr}</strong>
-        </div>`;
+  <body style="font-family: Arial, sans-serif;">
+    <h2>🎉 AIS Dealer Celebrations & Alerts</h2>
+    <p><strong>Date:</strong> ${dateStr}</p>
+    <hr>
+    <h3>🎂 Birthdays Today</h3>`;
   
-  // Birthdays
-  html += `<h3 style="color: #e91e63;">🎂 Birthdays Today</h3>`;
   if (alerts.birthday.length === 0) {
-    html += `<p>✨ No birthdays today.</p>`;
+    html += `<p>No birthdays today.</p>`;
   } else {
     html += `<ul>`;
     for (const item of alerts.birthday) {
@@ -236,10 +230,9 @@ function buildHtmlReport(alerts, dateStr) {
     html += `</ul>`;
   }
   
-  // Anniversaries
-  html += `<h3 style="color: #9c27b0;">💍 Marriage Anniversaries</h3>`;
+  html += `<h3>💍 Marriage Anniversaries</h3>`;
   if (alerts.anniversary.length === 0) {
-    html += `<p>✨ No anniversaries today.</p>`;
+    html += `<p>No anniversaries today.</p>`;
   } else {
     html += `<ul>`;
     for (const item of alerts.anniversary) {
@@ -248,10 +241,9 @@ function buildHtmlReport(alerts, dateStr) {
     html += `</ul>`;
   }
   
-  // Showroom Anniversaries
-  html += `<h3 style="color: #00bcd4;">🏬 Showroom Anniversaries</h3>`;
+  html += `<h3>🏬 Showroom Anniversaries</h3>`;
   if (alerts.showroomAnniversary.length === 0) {
-    html += `<p>✨ No showroom anniversaries today.</p>`;
+    html += `<p>No showroom anniversaries today.</p>`;
   } else {
     html += `<ul>`;
     for (const item of alerts.showroomAnniversary) {
@@ -260,10 +252,9 @@ function buildHtmlReport(alerts, dateStr) {
     html += `</ul>`;
   }
   
-  // Expiries
-  html += `<h3 style="color: #f44336;">⚠️ Agreement Expiries (Next 30 Days)</h3>`;
+  html += `<h3>⚠️ Agreement Expiries (Next 30 Days)</h3>`;
   if (alerts.expiry.length === 0) {
-    html += `<p>✅ No expiries in next 30 days.</p>`;
+    html += `<p>No expiries in next 30 days.</p>`;
   } else {
     html += `<ul>`;
     for (const item of alerts.expiry) {
@@ -272,10 +263,9 @@ function buildHtmlReport(alerts, dateStr) {
     html += `</ul>`;
   }
   
-  // Follow-ups
-  html += `<h3 style="color: #ff9800;">📞 Upcoming Follow-ups</h3>`;
+  html += `<h3>📞 Upcoming Follow-ups</h3>`;
   if (alerts.followUp.length === 0) {
-    html += `<p>✅ No follow-ups due.</p>`;
+    html += `<p>No follow-ups due.</p>`;
   } else {
     html += `<ul>`;
     for (const item of alerts.followUp) {
@@ -284,11 +274,7 @@ function buildHtmlReport(alerts, dateStr) {
     html += `</ul>`;
   }
   
-  html += `</div>
-      <div style="text-align: center; padding: 15px; font-size: 11px; color: #888; border-top: 1px solid #ddd;">
-        <p>This is an automated report from AIS Command Center</p>
-      </div>
-    </div>
+  html += `<hr><p style="font-size: 10px;">This is an automated report from AIS Command Center</p>
   </body>
   </html>`;
   
@@ -304,6 +290,8 @@ async function sendEmail(recipient, htmlBody, dateStr) {
   };
 
   console.log(`📧 Sending to: ${recipient}`);
+  console.log(`📧 Service ID: ${EMAILJS_SERVICE_ID}`);
+  console.log(`📧 Template ID: ${EMAILJS_TEMPLATE_ID}`);
 
   try {
     const response = await emailjs.send(
@@ -313,9 +301,14 @@ async function sendEmail(recipient, htmlBody, dateStr) {
       { publicKey: EMAILJS_PUBLIC_KEY, privateKey: EMAILJS_PRIVATE_KEY }
     );
     console.log(`✅ Success: ${recipient}`);
+    console.log(`📧 Response status: ${response?.status || 'OK'}`);
     return true;
   } catch (error) {
-    console.error(`❌ Failed: ${recipient} - ${error.message}`);
+    console.error(`❌ Failed: ${recipient}`);
+    console.error(`❌ Error name: ${error.name}`);
+    console.error(`❌ Error message: ${error.message}`);
+    console.error(`❌ Error text: ${error.text}`);
+    console.error(`❌ Full error:`, JSON.stringify(error, null, 2));
     return false;
   }
 }
@@ -333,6 +326,12 @@ async function main() {
   }
   
   // Check credentials
+  console.log('\n📋 Checking EmailJS credentials:');
+  console.log(`EMAILJS_SERVICE_ID: ${EMAILJS_SERVICE_ID ? '✅' : '❌'}`);
+  console.log(`EMAILJS_TEMPLATE_ID: ${EMAILJS_TEMPLATE_ID ? '✅' : '❌'}`);
+  console.log(`EMAILJS_PUBLIC_KEY: ${EMAILJS_PUBLIC_KEY ? '✅' : '❌'}`);
+  console.log(`EMAILJS_PRIVATE_KEY: ${EMAILJS_PRIVATE_KEY ? '✅' : '❌'}`);
+  
   if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY || !EMAILJS_PRIVATE_KEY) {
     console.error('❌ Missing EmailJS credentials!');
     process.exit(1);
@@ -351,20 +350,21 @@ async function main() {
   console.log('✅ All credentials found');
   
   // Get data from Google Sheet
-  console.log('📊 Fetching data from Google Sheet...');
+  console.log('\n📊 Fetching data from Google Sheet...');
   const alerts = await getSheetData();
   
   console.log(`📊 Found: ${alerts.birthday.length} birthdays, ${alerts.anniversary.length} anniversaries, ${alerts.expiry.length} expiries, ${alerts.followUp.length} follow-ups`);
   
   // Build email
   const htmlBody = buildHtmlReport(alerts, dateStr);
+  console.log(`📧 Email body length: ${htmlBody.length} characters`);
   
   // Determine recipients
   let recipients = MANUAL_RECIPIENT && MANUAL_RECIPIENT.trim() 
     ? [MANUAL_RECIPIENT] 
     : DEFAULT_RECIPIENTS;
   
-  console.log(`📧 Sending to ${recipients.length} recipients`);
+  console.log(`\n📧 Sending to ${recipients.length} recipients`);
   
   let successCount = 0;
   for (const recipient of recipients) {
