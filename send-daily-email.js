@@ -81,7 +81,12 @@ async function sendEmail(recipient) {
   
   const templateParams = {
     to_email: recipient,
-    date: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+date: new Date().toLocaleDateString('en-IN', { 
+  timeZone: 'Asia/Kolkata',
+  day: '2-digit',
+  month: '2-digit', 
+  year: 'numeric'
+}).replace(/\//g, '-'),
     report_type: 'Daily Summary',
     notes: 'Automated daily report from AIS Command Center',
     total_showrooms: metrics.total_showrooms,
