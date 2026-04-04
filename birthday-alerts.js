@@ -208,11 +208,9 @@ async function getSheetData() {
 }
 
 // Build HTML report
+// Build HTML report - WITHOUT outer HTML wrapper
 function buildHtmlReport(alerts, dateStr) {
-  let html = `<!DOCTYPE html>
-  <html>
-  <head><meta charset="UTF-8"></head>
-  <body style="font-family: Arial, sans-serif;">
+  let html = `
     <h2>🎉 AIS Dealer Celebrations & Alerts</h2>
     <p><strong>Date:</strong> ${dateStr}</p>
     <hr>
@@ -272,9 +270,7 @@ function buildHtmlReport(alerts, dateStr) {
     html += `</ul>`;
   }
   
-  html += `<hr><p style="font-size: 10px;">This is an automated report from AIS Command Center</p>
-  </body>
-  </html>`;
+  html += `<hr><p style="font-size: 10px; color: #888;">This is an automated report from AIS Command Center</p>`;
   
   return html;
 }
