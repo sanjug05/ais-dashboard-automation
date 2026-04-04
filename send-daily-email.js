@@ -13,6 +13,22 @@ const DEFAULT_RECIPIENTS = [
   'nidhi.tiwari@aisglass.com'
 ];
 
+// Function to get dashboard metrics (update with real data later)
+function getDashboardMetrics() {
+  // You can replace these with real API calls to your dashboard
+  return {
+    total_showrooms: 24,
+    completed_showrooms: 0,
+    avg_completion: 20,
+    delayed_showrooms: 23,
+    total_dealers: 0,
+    active_dealers: 0,
+    onboarded_dealers: 0,
+    delayed_dealers: 0,
+    delayed_message: '⚠️ 23 showrooms are currently delayed. Please review the dashboard for details.'
+  };
+}
+
 // Check if today is a holiday (Sunday or 2nd/4th Saturday)
 function isHoliday() {
   const today = new Date();
@@ -50,29 +66,37 @@ if (!MANUAL_RECIPIENT && isHoliday()) {
 // Check credentials
 if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) {
   console.error('❌ Missing EmailJS credentials!');
+  console.error('SERVICE_ID:', !!SERVICE_ID);
+  console.error('TEMPLATE_ID:', !!TEMPLATE_ID);
+  console.error('PUBLIC_KEY:', !!PUBLIC_KEY);
+  console.error('PRIVATE_KEY:', !!PRIVATE_KEY);
   process.exit(1);
 }
 
 console.log('✅ EmailJS credentials found');
 
 async function sendEmail(recipient) {
+  // Get fresh metrics for each email
+  const metrics = getDashboardMetrics();
+  
   const templateParams = {
-  to_email: recipient,
-  date: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-  report_type: reportType,
-  notes: notes || 'Automated daily report from AIS Command Center',
-  total_showrooms: totalShowrooms,
-  completed_showrooms: completedShowrooms,
-  avg_completion: avgCompletion,
-  delayed_showrooms: delayedShowrooms,
-  total_dealers: totalDealers,
-  active_dealers: activeDealers,
-  onboarded_dealers: onboardedDealers,
-  delayed_dealers: delayedDealers,
-  delayed_message: delayedList || '✅ No delayed projects at this time. All showrooms and dealers are on track! 🎉'
-};
+    to_email: recipient,
+    date: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+    report_type: 'Daily Summary',
+    notes: 'Automated daily report from AIS Command Center',
+    total_showrooms: metrics.total_showrooms,
+    completed_showrooms: metrics.completed_showrooms,
+    avg_completion: metrics.avg_completion,
+    delayed_showrooms: metrics.delayed_showrooms,
+    total_dealers: metrics.total_dealers,
+    active_dealers: metrics.active_dealers,
+    onboarded_dealers: metrics.onboarded_dealers,
+    delayed_dealers: metrics.delayed_dealers,
+    delayed_message: metrics.delayed_message
+  };
 
   console.log(`📧 Sending to: ${recipient}`);
+  console.log('📊 Metrics:', JSON.stringify(metrics, null, 2));
 
   try {
     const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
@@ -92,7 +116,7 @@ async function sendEmail(recipient) {
       return true;
     } else {
       const errorText = await response.text();
-      console.error(`❌ Failed: ${recipient} - ${errorText}`);
+      console.error(`❌ Failed: ${recipient} - HTTP ${response.status}: ${errorText}`);
       return false;
     }
   } catch (error) {
@@ -110,13 +134,22 @@ async function main() {
   
   let successCount = 0;
   for (const recipient of recipients) {
-    if (await sendEmail(recipient)) successCount++;
+    const success = await sendEmail(recipient);
+    if (success) successCount++;
+    // Wait 2 seconds between emails to avoid rate limiting
     await new Promise(r => setTimeout(r, 2000));
   }
   
   console.log(`\n📬 Done: ${successCount}/${recipients.length} successful`);
-  if (successCount === 0) process.exit(1);
+  if (successCount === 0) {
+    console.error('❌ No emails were sent successfully');
+    process.exit(1);
+  }
   console.log('🎉 All emails sent successfully!');
 }
 
-main().catch(err => { console.error('Script error:', err); process.exit(1); });
+// Run the script
+main().catch(err => { 
+  console.error('❌ Script error:', err); 
+  process.exit(1); 
+});
