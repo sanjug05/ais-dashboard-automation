@@ -24,22 +24,18 @@ const CONFIG = {
   FOLLOW_UP_THRESHOLD_DAYS: 3
 };
 
-// Google Sheets credentials - FIXED PRIVATE KEY HANDLING
-const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
-const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-// Handle private key properly - replace escaped newlines and ensure correct format
-let GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
-if (GOOGLE_PRIVATE_KEY) {
-  // Replace escaped newlines with actual newlines
-  GOOGLE_PRIVATE_KEY = GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
-  // Ensure it starts with -----BEGIN PRIVATE KEY-----
-  if (!GOOGLE_PRIVATE_KEY.includes('-----BEGIN PRIVATE KEY-----')) {
-    GOOGLE_PRIVATE_KEY = GOOGLE_PRIVATE_KEY.replace(/-----BEGIN PRIVATE KEY-----\\n/, '-----BEGIN PRIVATE KEY-----\n');
-  }
-  // Ensure it ends with -----END PRIVATE KEY-----
-  if (!GOOGLE_PRIVATE_KEY.includes('-----END PRIVATE KEY-----')) {
-    GOOGLE_PRIVATE_KEY = GOOGLE_PRIVATE_KEY.replace(/\\n-----END PRIVATE KEY-----/, '\n-----END PRIVATE KEY-----');
-  }
+// Parse the full JSON service account key
+let GOOGLE_AUTH = null;
+try {
+  const serviceAccountJson = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+  GOOGLE_AUTH = new google.auth.JWT(
+    serviceAccountJson.client_email,
+    null,
+    serviceAccountJson.private_key,
+    ['https://www.googleapis.com/auth/spreadsheets.readonly']
+  );
+} catch (error) {
+  console.error('❌ Failed to parse Google service account JSON:', error.message);
 }
 
 // Check if today is a holiday (Sunday or 2nd/4th Saturday)
@@ -125,22 +121,15 @@ function findColumn(headers, keywords) {
   return -1;
 }
 
-// Get data from Google Sheet - FIXED AUTH METHOD
+// Get data from Google Sheet
 async function getSheetData() {
   try {
-    // Use the service account credentials directly
-    const auth = new google.auth.JWT({
-      email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      key: GOOGLE_PRIVATE_KEY,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly']
-    });
-
-    const sheets = google.sheets({ version: 'v4', auth });
+    const sheets = google.sheets({ version: 'v4', auth: GOOGLE_AUTH });
     
-    console.log('📡 Authenticating and fetching sheet data...');
+    console.log('📡 Fetching sheet data...');
     
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEET_ID,
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: `${CONFIG.SHEET_NAME}!A:ZZ`,
     });
 
@@ -346,12 +335,16 @@ async function main() {
     process.exit(1);
   }
   
-  // Check Google Sheets credentials
-  if (!GOOGLE_SHEET_ID || !GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY) {
+  // Check Google credentials
+  if (!process.env.GOOGLE_SHEET_ID || !process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
     console.error('❌ Missing Google Sheets credentials!');
-    console.error('GOOGLE_SHEET_ID:', !!GOOGLE_SHEET_ID);
-    console.error('GOOGLE_SERVICE_ACCOUNT_EMAIL:', !!GOOGLE_SERVICE_ACCOUNT_EMAIL);
-    console.error('GOOGLE_PRIVATE_KEY:', !!GOOGLE_PRIVATE_KEY);
+    console.error('GOOGLE_SHEET_ID:', !!process.env.GOOGLE_SHEET_ID);
+    console.error('GOOGLE_SERVICE_ACCOUNT_JSON:', !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+    process.exit(1);
+  }
+  
+  if (!GOOGLE_AUTH) {
+    console.error('❌ Failed to initialize Google Auth!');
     process.exit(1);
   }
   
