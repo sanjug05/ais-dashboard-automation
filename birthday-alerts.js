@@ -279,7 +279,7 @@ function buildHtmlReport(alerts, dateStr) {
 async function sendEmail(recipient, htmlBody, dateStr) {
   const templateParams = {
     to_email: recipient,
-    subject: '🎉 AIS Celebrations & Alerts - {{date}}',
+    subject: '🎉 AIS Celebrations & Alerts - ${getFormattedDate()}`,
     date: dateStr,
     message: htmlBody
   };
