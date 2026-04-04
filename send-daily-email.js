@@ -15,25 +15,25 @@ const DEFAULT_RECIPIENTS = [
 
 // Function to get dashboard metrics
 function getDashboardMetrics() {
+  // TODO: Replace with actual API call to your dashboard data
+  // For now, showing sample data with "no data" message
   return {
-    total_showrooms: 24,
+    total_showrooms: 0,
     completed_showrooms: 0,
-    avg_completion: 20,
-    delayed_showrooms: 23,
+    avg_completion: 0,
+    delayed_showrooms: 0,
     total_dealers: 0,
     active_dealers: 0,
     onboarded_dealers: 0,
     delayed_dealers: 0,
-    delayed_message: '⚠️ 23 showrooms are currently delayed. Please review the dashboard for details.'
+    delayed_message: '✅ No delayed projects at this time. All showrooms and dealers are on track! 🎉'
   };
 }
 
-// Function to get formatted date without slashes
-// Function to get formatted date in IST (Indian Standard Time)
+// Function to get formatted date in IST
 function getFormattedDate() {
   const now = new Date();
-  // Convert to IST (UTC+5:30)
-  const istOffset = 5.5 * 60 * 60 * 1000; // 5 hours 30 minutes in milliseconds
+  const istOffset = 5.5 * 60 * 60 * 1000;
   const istTime = new Date(now.getTime() + istOffset);
   
   const year = istTime.getUTCFullYear();
@@ -46,71 +46,95 @@ function getFormattedDate() {
   return `${day}-${month}-${year} ${hours}:${minutes}:${seconds} IST`;
 }
 
-// Check if today is a holiday (Sunday or 2nd/4th Saturday)
-function isHoliday() {
-  const today = new Date();
-  const day = today.getDay();
-  const date = today.getDate();
-  
-  if (day === 0) {
-    console.log(`📅 ${today.toDateString()} is a Sunday (Holiday)`);
-    return true;
+// Build HTML email report
+function buildHtmlReport(metrics, dateStr) {
+  // Showroom status message
+  let showroomStatus = '';
+  if (metrics.total_showrooms === 0) {
+    showroomStatus = '<p style="color: #888;">📭 No showroom data available at this time.</p>';
+  } else {
+    showroomStatus = `
+      <div style="display: flex; justify-content: space-around; flex-wrap: wrap; margin: 15px 0;">
+        <div style="text-align: center; flex: 1; min-width: 100px;">
+          <div style="font-size: 28px; font-weight: 800; color: #C6A43B;">${metrics.total_showrooms}</div>
+          <div style="font-size: 11px; color: #666;">Total Showrooms</div>
+        </div>
+        <div style="text-align: center; flex: 1; min-width: 100px;">
+          <div style="font-size: 28px; font-weight: 800; color: #27ae60;">${metrics.completed_showrooms}</div>
+          <div style="font-size: 11px; color: #666;">Completed</div>
+        </div>
+        <div style="text-align: center; flex: 1; min-width: 100px;">
+          <div style="font-size: 28px; font-weight: 800; color: #C6A43B;">${metrics.avg_completion}%</div>
+          <div style="font-size: 11px; color: #666;">Avg Completion</div>
+        </div>
+        <div style="text-align: center; flex: 1; min-width: 100px;">
+          <div style="font-size: 28px; font-weight: 800; color: ${metrics.delayed_showrooms > 0 ? '#e74c3c' : '#27ae60'};">${metrics.delayed_showrooms}</div>
+          <div style="font-size: 11px; color: #666;">Delayed</div>
+        </div>
+      </div>
+    `;
   }
   
-  if (day === 6) {
-    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    const firstSaturday = firstDayOfMonth.getDay() === 6 ? 1 : 7 - firstDayOfMonth.getDay();
-    const saturdayCount = Math.ceil((date - firstSaturday + 1) / 7);
-    
-    if (saturdayCount === 2 || saturdayCount === 4) {
-      console.log(`📅 ${today.toDateString()} is the ${saturdayCount}nd/4th Saturday (Holiday)`);
-      return true;
-    }
+  // Dealer status message
+  let dealerStatus = '';
+  if (metrics.total_dealers === 0) {
+    dealerStatus = '<p style="color: #888;">📭 No dealer data available at this time.</p>';
+  } else {
+    dealerStatus = `
+      <div style="display: flex; justify-content: space-around; flex-wrap: wrap; margin: 15px 0;">
+        <div style="text-align: center; flex: 1; min-width: 100px;">
+          <div style="font-size: 28px; font-weight: 800; color: #C6A43B;">${metrics.total_dealers}</div>
+          <div style="font-size: 11px; color: #666;">Total Dealers</div>
+        </div>
+        <div style="text-align: center; flex: 1; min-width: 100px;">
+          <div style="font-size: 28px; font-weight: 800; color: #3498db;">${metrics.active_dealers}</div>
+          <div style="font-size: 11px; color: #666;">Active</div>
+        </div>
+        <div style="text-align: center; flex: 1; min-width: 100px;">
+          <div style="font-size: 28px; font-weight: 800; color: #27ae60;">${metrics.onboarded_dealers}</div>
+          <div style="font-size: 11px; color: #666;">Onboarded</div>
+        </div>
+        <div style="text-align: center; flex: 1; min-width: 100px;">
+          <div style="font-size: 28px; font-weight: 800; color: ${metrics.delayed_dealers > 0 ? '#e74c3c' : '#27ae60'};">${metrics.delayed_dealers}</div>
+          <div style="font-size: 11px; color: #666;">Delayed</div>
+        </div>
+      </div>
+    `;
   }
   
-  return false;
+  return `
+    <div style="font-family: 'Segoe UI', Arial, sans-serif;">
+      <h2 style="color: #C6A43B; margin: 0 0 10px 0;">📊 AIS Dashboard Summary</h2>
+      <p><strong>Report Time:</strong> ${dateStr}</p>
+      <hr style="border: none; border-top: 1px solid #ddd;">
+      
+      <h3 style="color: #1a73e8;">🏢 Showroom Performance</h3>
+      ${showroomStatus}
+      
+      <h3 style="color: #1a73e8; margin-top: 25px;">👥 Dealer Onboarding</h3>
+      ${dealerStatus}
+      
+      <h3 style="color: #e74c3c;">⚠️ Delayed Projects</h3>
+      <div style="background: ${metrics.delayed_showrooms > 0 || metrics.delayed_dealers > 0 ? '#fce8e6' : '#e8f5e9'}; padding: 15px; border-radius: 8px;">
+        ${metrics.delayed_message}
+      </div>
+      
+      <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
+      <p style="font-size: 11px; color: #888; text-align: center;">
+        This is an automated report from AIS Command Center<br>
+        © 2026 AIS Windows | All Rights Reserved
+      </p>
+    </div>
+  `;
 }
 
-console.log('🚀 Starting daily email report...');
-console.log(`Time: ${getFormattedDate()}`);
-
-// Skip on holidays for automated runs
-if (!MANUAL_RECIPIENT && isHoliday()) {
-  console.log('📅 Today is a holiday. Skipping automated email report.');
-  process.exit(0);
-}
-
-// Check credentials
-if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) {
-  console.error('❌ Missing EmailJS credentials!');
-  console.error('SERVICE_ID exists:', !!SERVICE_ID);
-  console.error('TEMPLATE_ID exists:', !!TEMPLATE_ID);
-  console.error('PUBLIC_KEY exists:', !!PUBLIC_KEY);
-  console.error('PRIVATE_KEY exists:', !!PRIVATE_KEY);
-  process.exit(1);
-}
-
-console.log('✅ EmailJS credentials found');
-
-async function sendEmail(recipient) {
-  // Get fresh metrics for each email
-  const metrics = getDashboardMetrics();
-  
+// Send email using REST API
+async function sendEmail(recipient, htmlBody, dateStr) {
   const templateParams = {
     to_email: recipient,
-    subject: `📊 AIS Dashboard Report - ${getFormattedDate()}`,
-    date: getFormattedDate(),
-    report_type: 'Daily Summary',
-    notes: 'Automated daily report from AIS Command Center',
-    total_showrooms: metrics.total_showrooms,
-    completed_showrooms: metrics.completed_showrooms,
-    avg_completion: metrics.avg_completion,
-    delayed_showrooms: metrics.delayed_showrooms,
-    total_dealers: metrics.total_dealers,
-    active_dealers: metrics.active_dealers,
-    onboarded_dealers: metrics.onboarded_dealers,
-    delayed_dealers: metrics.delayed_dealers,
-    delayed_message: metrics.delayed_message
+    subject: `📊 AIS Dashboard Report - ${dateStr}`,
+    date: dateStr,
+    message: htmlBody
   };
 
   console.log(`📧 Sending to: ${recipient}`);
@@ -142,7 +166,59 @@ async function sendEmail(recipient) {
   }
 }
 
+// Check if today is a holiday
+function isHoliday() {
+  const today = new Date();
+  const day = today.getDay();
+  const date = today.getDate();
+  
+  if (day === 0) {
+    console.log(`📅 ${today.toDateString()} is a Sunday (Holiday)`);
+    return true;
+  }
+  
+  if (day === 6) {
+    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const firstSaturday = firstDayOfMonth.getDay() === 6 ? 1 : 7 - firstDayOfMonth.getDay();
+    const saturdayCount = Math.ceil((date - firstSaturday + 1) / 7);
+    
+    if (saturdayCount === 2 || saturdayCount === 4) {
+      console.log(`📅 ${today.toDateString()} is the ${saturdayCount}nd/4th Saturday (Holiday)`);
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+// Main function
 async function main() {
+  console.log('🚀 Starting dashboard email report...');
+  const dateStr = getFormattedDate();
+  console.log(`Time: ${dateStr}`);
+  
+  // Skip on holidays for automated runs
+  if (!MANUAL_RECIPIENT && isHoliday()) {
+    console.log('📅 Today is a holiday. Skipping automated email report.');
+    process.exit(0);
+  }
+  
+  // Check credentials
+  if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) {
+    console.error('❌ Missing EmailJS credentials!');
+    process.exit(1);
+  }
+  
+  console.log('✅ EmailJS credentials found');
+  
+  // Get dashboard metrics
+  const metrics = getDashboardMetrics();
+  console.log('📊 Metrics collected');
+  
+  // Build email
+  const htmlBody = buildHtmlReport(metrics, dateStr);
+  
+  // Determine recipients
   let recipients = MANUAL_RECIPIENT && MANUAL_RECIPIENT.trim() 
     ? [MANUAL_RECIPIENT] 
     : DEFAULT_RECIPIENTS;
@@ -151,7 +227,7 @@ async function main() {
   
   let successCount = 0;
   for (const recipient of recipients) {
-    const success = await sendEmail(recipient);
+    const success = await sendEmail(recipient, htmlBody, dateStr);
     if (success) successCount++;
     await new Promise(r => setTimeout(r, 2000));
   }
