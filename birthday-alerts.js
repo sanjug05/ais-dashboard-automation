@@ -1,7 +1,7 @@
 // birthday-alerts.js
 const { google } = require('googleapis');
 
-// EmailJS credentials (using REST API, same as dashboard)
+// EmailJS credentials
 const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const EMAILJS_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
@@ -62,7 +62,7 @@ function isHoliday() {
   return false;
 }
 
-// Format date
+// Format date for display
 function formatDate(date, includeTime = false) {
   if (!date) return '—';
   const d = new Date(date);
@@ -85,36 +85,60 @@ function getCurrentDateIST() {
   return formatDate(istTime, true);
 }
 
-// Parse DD/MM/YYYY date
+// Parse DD/MM/YYYY date - FIXED VERSION
 function parseSpecificDate(val) {
   if (!val) return null;
+  
+  // If already a valid Date object
   if (val instanceof Date && !isNaN(val.getTime())) return val;
   
-  if (typeof val === 'string' && val.includes('/')) {
-    const parts = val.split('/');
+  // Handle string DD/MM/YYYY
+  if (typeof val === 'string') {
+    // Check for DD/MM/YYYY format
+    let parts;
+    if (val.includes('/')) {
+      parts = val.split('/');
+    } else if (val.includes('-')) {
+      parts = val.split('-');
+    } else {
+      return null;
+    }
+    
     if (parts.length === 3) {
-      return new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+      const day = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const year = parseInt(parts[2], 10);
+      const date = new Date(year, month, day);
+      // Validate the date is valid
+      if (!isNaN(date.getTime())) {
+        return date;
+      }
     }
   }
   
+  // Handle Excel serial number
   if (typeof val === 'number') {
-    return new Date((val - 25569) * 86400 * 1000);
+    const date = new Date((val - 25569) * 86400 * 1000);
+    if (!isNaN(date.getTime())) return date;
   }
   
   return null;
 }
 
-// Check if same day and month
+// Check if same day and month (for birthdays/anniversaries)
 function isSameDayMonth(d1, d2) {
+  if (!d1 || !d2) return false;
   return d1.getDate() === d2.getDate() && d1.getMonth() === d2.getMonth();
 }
 
-// Find column index
+// Find column index by keywords
 function findColumn(headers, keywords) {
   for (let i = 0; i < headers.length; i++) {
     const headText = headers[i]?.toString().toLowerCase().trim() || '';
-    if (keywords.some(k => headText === k.toLowerCase() || headText.includes(k.toLowerCase()))) {
-      return i;
+    for (const keyword of keywords) {
+      if (headText === keyword.toLowerCase() || headText.includes(keyword.toLowerCase())) {
+        return i;
+      }
     }
   }
   return -1;
@@ -139,16 +163,29 @@ async function getSheetData() {
     const headers = rows[0];
     const dataRows = rows.slice(1);
     
+    // Log headers for debugging
+    console.log('📋 Sheet Headers found:', headers.slice(0, 10));
+    
     const col = {
-      dealerName: findColumn(headers, ['Channel Partner']),
-      city: findColumn(headers, ['City']),
-      rm: findColumn(headers, ['RM']),
-      expiry: findColumn(headers, ['Last Agreement Date', 'Expiry']),
-      dob: findColumn(headers, ['Date of Birth']),
-      showroomAnniversary: 42,
-      anniversary: findColumn(headers, ['Marriage anniversary']),
-      followUp: findColumn(headers, ['Follow-up Date', 'Next Follow Up']),
+      dealerName: findColumn(headers, ['Channel Partner', 'Dealer Name', 'Partner']),
+      city: findColumn(headers, ['City', 'Location']),
+      rm: findColumn(headers, ['RM', 'Relationship Manager']),
+      expiry: findColumn(headers, ['Last Agreement Date', 'Expiry', 'Expiry Date', 'Agreement Expiry']),
+      dob: findColumn(headers, ['Date of Birth', 'DOB', 'Birth Date']),
+      showroomAnniversary: findColumn(headers, ['Showroom Anniversary', 'Showroom Date']),
+      anniversary: findColumn(headers, ['Marriage anniversary', 'Anniversary', 'Wedding Anniversary']),
+      followUp: findColumn(headers, ['Follow-up Date', 'Next Follow Up', 'Follow Up']),
     };
+    
+    console.log('📋 Column mapping:', {
+      dealerName: col.dealerName,
+      city: col.city,
+      rm: col.rm,
+      dob: col.dob,
+      anniversary: col.anniversary,
+      expiry: col.expiry,
+      followUp: col.followUp
+    });
     
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -161,40 +198,68 @@ async function getSheetData() {
       followUp: []
     };
     
-    for (const row of dataRows) {
+    for (let i = 0; i < dataRows.length; i++) {
+      const row = dataRows[i];
+      
+      const dob = parseSpecificDate(row[col.dob]);
+      const anniversary = parseSpecificDate(row[col.anniversary]);
+      const showroomAnniversary = parseSpecificDate(row[col.showroomAnniversary]);
+      const expiry = parseSpecificDate(row[col.expiry]);
+      const followUp = parseSpecificDate(row[col.followUp]);
+      
       const dealerInfo = {
         name: row[col.dealerName] || 'Unknown Dealer',
         city: row[col.city] || 'N/A',
         rm: row[col.rm] || 'N/A',
-        expiry: parseSpecificDate(row[col.expiry]),
-        dob: parseSpecificDate(row[col.dob]),
-        showroomAnniversary: parseSpecificDate(row[col.showroomAnniversary]),
-        anniversary: parseSpecificDate(row[col.anniversary]),
-        followUp: parseSpecificDate(row[col.followUp]),
+        dob: dob,
+        anniversary: anniversary,
+        showroomAnniversary: showroomAnniversary,
+        expiry: expiry,
+        followUp: followUp,
       };
       
+      // Debug log for first few rows
+      if (i < 3) {
+        console.log(`📝 Row ${i + 2}:`, {
+          name: dealerInfo.name,
+          dob: dealerInfo.dob ? formatDate(dealerInfo.dob) : 'null',
+          anniversary: dealerInfo.anniversary ? formatDate(dealerInfo.anniversary) : 'null',
+          expiry: dealerInfo.expiry ? formatDate(dealerInfo.expiry) : 'null',
+        });
+      }
+      
+      // Birthday check
       if (dealerInfo.dob && isSameDayMonth(dealerInfo.dob, today)) {
+        console.log(`🎂 Birthday today: ${dealerInfo.name}`);
         alerts.birthday.push(dealerInfo);
       }
       
+      // Anniversary check
       if (dealerInfo.anniversary && isSameDayMonth(dealerInfo.anniversary, today)) {
+        console.log(`💍 Anniversary today: ${dealerInfo.name}`);
         alerts.anniversary.push(dealerInfo);
       }
       
+      // Showroom Anniversary check
       if (dealerInfo.showroomAnniversary && isSameDayMonth(dealerInfo.showroomAnniversary, today)) {
+        console.log(`🏬 Showroom Anniversary today: ${dealerInfo.name}`);
         alerts.showroomAnniversary.push(dealerInfo);
       }
       
+      // Expiry check (within 30 days, including today)
       if (dealerInfo.expiry) {
         const diffDays = Math.ceil((dealerInfo.expiry - today) / (1000 * 60 * 60 * 24));
         if (diffDays >= 0 && diffDays <= CONFIG.EXPIRY_THRESHOLD_DAYS) {
+          console.log(`⚠️ Expiry in ${diffDays} days: ${dealerInfo.name}`);
           alerts.expiry.push({ ...dealerInfo, daysLeft: diffDays });
         }
       }
       
+      // Follow-up check
       if (dealerInfo.followUp) {
         const diffDays = Math.ceil((dealerInfo.followUp - today) / (1000 * 60 * 60 * 24));
         if (diffDays >= 0 && diffDays <= CONFIG.FOLLOW_UP_THRESHOLD_DAYS) {
+          console.log(`📞 Follow-up in ${diffDays} days: ${dealerInfo.name}`);
           alerts.followUp.push({ ...dealerInfo, daysLeft: diffDays });
         }
       }
@@ -208,85 +273,91 @@ async function getSheetData() {
 }
 
 // Build HTML report
-// Build HTML report - WITHOUT outer HTML wrapper
 function buildHtmlReport(alerts, dateStr) {
   let html = `
-    <h2>🎉 AIS Dealer Celebrations & Alerts</h2>
-    <p><strong>Date:</strong> ${dateStr}</p>
-    <hr>
-    <h3>🎂 Birthdays Today</h3>`;
+    <div style="font-family: 'Segoe UI', Arial, sans-serif;">
+      <h2 style="color: #C6A43B;">🎉 AIS Dealer Celebrations & Alerts</h2>
+      <p><strong>Date:</strong> ${dateStr}</p>
+      <hr>
+      
+      <h3 style="color: #e91e63;">🎂 Birthdays Today</h3>`;
   
   if (alerts.birthday.length === 0) {
-    html += `<p>No birthdays today.</p>`;
+    html += `<p>✨ No birthdays today.</p>`;
   } else {
     html += `<ul>`;
     for (const item of alerts.birthday) {
-      html += `<li>${item.name} - ${item.city} (RM: ${item.rm})</li>`;
+      html += `<li><strong>${item.name}</strong> - ${item.city} (RM: ${item.rm})</li>`;
     }
     html += `</ul>`;
   }
   
-  html += `<h3>💍 Marriage Anniversaries</h3>`;
+  html += `<h3 style="color: #9c27b0;">💍 Marriage Anniversaries</h3>`;
   if (alerts.anniversary.length === 0) {
-    html += `<p>No anniversaries today.</p>`;
+    html += `<p>✨ No anniversaries today.</p>`;
   } else {
     html += `<ul>`;
     for (const item of alerts.anniversary) {
-      html += `<li>${item.name} - ${item.city} (RM: ${item.rm})</li>`;
+      html += `<li><strong>${item.name}</strong> - ${item.city} (RM: ${item.rm})</li>`;
     }
     html += `</ul>`;
   }
   
-  html += `<h3>🏬 Showroom Anniversaries</h3>`;
+  html += `<h3 style="color: #00bcd4;">🏬 Showroom Anniversaries</h3>`;
   if (alerts.showroomAnniversary.length === 0) {
-    html += `<p>No showroom anniversaries today.</p>`;
+    html += `<p>✨ No showroom anniversaries today.</p>`;
   } else {
     html += `<ul>`;
     for (const item of alerts.showroomAnniversary) {
-      html += `<li>${item.name} - ${item.city} (RM: ${item.rm})</li>`;
+      html += `<li><strong>${item.name}</strong> - ${item.city} (RM: ${item.rm})</li>`;
     }
     html += `</ul>`;
   }
   
-  html += `<h3>⚠️ Agreement Expiries (Next 30 Days)</h3>`;
+  html += `<h3 style="color: #f44336;">⚠️ Agreement Expiries (Next 30 Days)</h3>`;
   if (alerts.expiry.length === 0) {
-    html += `<p>No expiries in next 30 days.</p>`;
+    html += `<p>✅ No expiries in next 30 days.</p>`;
   } else {
     html += `<ul>`;
     for (const item of alerts.expiry) {
-      html += `<li>${item.name} - ${item.city} (RM: ${item.rm}) - ${item.daysLeft} days left</li>`;
+      const urgency = item.daysLeft === 0 ? '⚠️ EXPIRES TODAY ⚠️' : `${item.daysLeft} days left`;
+      html += `<li><strong>${item.name}</strong> - ${item.city} (RM: ${item.rm}) - <strong>${urgency}</strong></li>`;
     }
     html += `</ul>`;
   }
   
-  html += `<h3>📞 Upcoming Follow-ups</h3>`;
+  html += `<h3 style="color: #ff9800;">📞 Upcoming Follow-ups</h3>`;
   if (alerts.followUp.length === 0) {
-    html += `<p>No follow-ups due.</p>`;
+    html += `<p>✅ No follow-ups due.</p>`;
   } else {
     html += `<ul>`;
     for (const item of alerts.followUp) {
-      html += `<li>${item.name} - ${item.city} (RM: ${item.rm}) - ${item.daysLeft} days left</li>`;
+      const urgency = item.daysLeft === 0 ? '🔴 TODAY' : `${item.daysLeft} days left`;
+      html += `<li><strong>${item.name}</strong> - ${item.city} (RM: ${item.rm}) - ${urgency}</li>`;
     }
     html += `</ul>`;
   }
   
-  html += `<hr><p style="font-size: 10px; color: #888;">This is an automated report from AIS Command Center</p>`;
+  html += `<hr>
+      <p style="font-size: 11px; color: #888; text-align: center;">
+        This is an automated report from AIS Command Center<br>
+        © 2026 AIS Windows | All Rights Reserved
+      </p>
+    </div>`;
   
   return html;
 }
 
-// Send email using REST API (same method as working dashboard)
+// Send email using REST API
 async function sendEmail(recipient, htmlBody, dateStr) {
   const templateParams = {
     to_email: recipient,
-    subject: '🎉 AIS Celebrations & Alerts - {{date}}',
+    subject: `🎉 AIS Celebrations & Alerts - ${dateStr}`,
     date: dateStr,
     message: htmlBody
   };
 
   console.log(`📧 Sending to: ${recipient}`);
-  console.log(`📧 Using Service ID: ${EMAILJS_SERVICE_ID}`);
-  console.log(`📧 Using Template ID: ${EMAILJS_TEMPLATE_ID}`);
 
   try {
     const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
@@ -321,18 +392,10 @@ async function main() {
   const dateStr = getCurrentDateIST();
   console.log(`Time: ${dateStr}`);
   
-  // Skip on holidays for automated runs
   if (!MANUAL_RECIPIENT && isHoliday()) {
     console.log('📅 Today is a holiday. Skipping automated alerts.');
     process.exit(0);
   }
-  
-  // Check credentials
-  console.log('\n📋 Checking EmailJS credentials:');
-  console.log(`EMAILJS_SERVICE_ID: ${EMAILJS_SERVICE_ID ? '✅' : '❌'}`);
-  console.log(`EMAILJS_TEMPLATE_ID: ${EMAILJS_TEMPLATE_ID ? '✅' : '❌'}`);
-  console.log(`EMAILJS_PUBLIC_KEY: ${EMAILJS_PUBLIC_KEY ? '✅' : '❌'}`);
-  console.log(`EMAILJS_PRIVATE_KEY: ${EMAILJS_PRIVATE_KEY ? '✅' : '❌'}`);
   
   if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY || !EMAILJS_PRIVATE_KEY) {
     console.error('❌ Missing EmailJS credentials!');
@@ -351,17 +414,13 @@ async function main() {
   
   console.log('✅ All credentials found');
   
-  // Get data from Google Sheet
   console.log('\n📊 Fetching data from Google Sheet...');
   const alerts = await getSheetData();
   
-  console.log(`📊 Found: ${alerts.birthday.length} birthdays, ${alerts.anniversary.length} anniversaries, ${alerts.expiry.length} expiries, ${alerts.followUp.length} follow-ups`);
+  console.log(`\n📊 Summary: ${alerts.birthday.length} birthdays, ${alerts.anniversary.length} anniversaries, ${alerts.expiry.length} expiries, ${alerts.followUp.length} follow-ups`);
   
-  // Build email
   const htmlBody = buildHtmlReport(alerts, dateStr);
-  console.log(`📧 Email body length: ${htmlBody.length} characters`);
   
-  // Determine recipients
   let recipients = MANUAL_RECIPIENT && MANUAL_RECIPIENT.trim() 
     ? [MANUAL_RECIPIENT] 
     : DEFAULT_RECIPIENTS;
@@ -376,14 +435,10 @@ async function main() {
   }
   
   console.log(`\n📬 Done: ${successCount}/${recipients.length} successful`);
-  if (successCount === 0) {
-    console.error('❌ No emails were sent successfully');
-    process.exit(1);
-  }
+  if (successCount === 0) process.exit(1);
   console.log('🎉 All alerts sent successfully!');
 }
 
-// Run the script
 main().catch(err => { 
   console.error('❌ Script error:', err); 
   process.exit(1); 
