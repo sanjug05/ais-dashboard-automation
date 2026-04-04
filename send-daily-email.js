@@ -57,19 +57,20 @@ console.log('✅ EmailJS credentials found');
 
 async function sendEmail(recipient) {
   const templateParams = {
-    to_email: recipient,
-    date: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-    report_type: 'Daily Summary',
-    notes: 'Automated daily report from AIS Command Center',
-    total_showrooms: 24,
-    completed_showrooms: 0,
-    avg_completion: 20,
-    delayed_showrooms: 23,
-    total_dealers: 0,
-    active_dealers: 0,
-    onboarded_dealers: 0,
-    delayed_dealers: 0
-  };
+  to_email: recipient,
+  date: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+  report_type: reportType,
+  notes: notes || 'Automated daily report from AIS Command Center',
+  total_showrooms: totalShowrooms,
+  completed_showrooms: completedShowrooms,
+  avg_completion: avgCompletion,
+  delayed_showrooms: delayedShowrooms,
+  total_dealers: totalDealers,
+  active_dealers: activeDealers,
+  onboarded_dealers: onboardedDealers,
+  delayed_dealers: delayedDealers,
+  delayed_message: delayedList || '✅ No delayed projects at this time. All showrooms and dealers are on track! 🎉'
+};
 
   console.log(`📧 Sending to: ${recipient}`);
 
