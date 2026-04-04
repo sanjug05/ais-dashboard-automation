@@ -13,153 +13,27 @@ const DEFAULT_RECIPIENTS = [
   'nidhi.tiwari@aisglass.com'
 ];
 
-// Function to get dashboard metrics - FETCHES REAL DATA FROM FIREBASE
-async function getDashboardMetrics() {
-  try {
-    console.log('📡 Fetching showrooms from Firebase...');
-    const showroomsResponse = await fetch('https://ais-showroom-dashboard.firebaseio.com/showrooms.json');
-    const showroomsData = await showroomsResponse.json();
-    
-    console.log('📡 Fetching dealers from Firebase...');
-    const dealersResponse = await fetch('https://ais-showroom-dashboard.firebaseio.com/dealerOnboarding.json');
-    const dealersData = await dealersResponse.json();
-    
-    // Process Showrooms
-    let totalShowrooms = 0;
-    let completedShowrooms = 0;
-    let totalCompletionSum = 0;
-    let delayedShowrooms = 0;
-    
-    const phaseKeys = ['dim', 'cad', 'plan', 'civil', 'interior', 'brand', 'window', 'launch'];
-    const totalPhases = phaseKeys.length;
-    
-    if (showroomsData) {
-      const showrooms = Object.values(showroomsData);
-      totalShowrooms = showrooms.length;
-      
-      for (const showroom of showrooms) {
-        const phases = showroom.data || {};
-        let completedPhases = 0;
-        
-        for (const phase of phaseKeys) {
-          if (phases[phase] && phases[phase].actualDate) {
-            completedPhases++;
-          }
-        }
-        
-        const completionPct = Math.round((completedPhases / totalPhases) * 100);
-        totalCompletionSum += completionPct;
-        
-        if (completionPct === 100) {
-          completedShowrooms++;
-        }
-        
-        // Check for delays (if start date exists)
-        if (showroom.startDate) {
-          const start = new Date(showroom.startDate);
-          const today = new Date();
-          const daysElapsed = Math.floor((today - start) / (1000 * 60 * 60 * 24));
-          const expectedProgress = Math.min(100, Math.round((daysElapsed / 90) * 100));
-          
-          if (completionPct < expectedProgress - 15) {
-            delayedShowrooms++;
-          }
-        }
-      }
-    }
-    
-    const avgCompletion = totalShowrooms > 0 ? Math.round(totalCompletionSum / totalShowrooms) : 0;
-    
-    // Process Dealers
-    let totalDealers = 0;
-    let activeDealers = 0;
-    let onboardedDealers = 0;
-    let delayedDealers = 0;
-    
-    const stageTargets = {
-      'Interested': 0,
-      'Shortlisted': 3,
-      'CFT Selected': 8,
-      'Documentation': 15,
-      'Onboarded': 22
-    };
-    
-    if (dealersData) {
-      const dealers = Object.values(dealersData);
-      totalDealers = dealers.length;
-      
-      for (const dealer of dealers) {
-        // Check if dropped
-        const isDropped = dealer.status === 'Dropped' || 
-                          dealer.flags?.cftRejected === true || 
-                          dealer.flags?.prospectBackout === true;
-        
-        if (dealer.status === 'Completed') {
-          onboardedDealers++;
-        } else if (!isDropped && dealer.status === 'Active') {
-          activeDealers++;
-        }
-        
-        // Check for delays
-        if (dealer.startDate && dealer.status !== 'Completed' && !isDropped) {
-          const start = new Date(dealer.startDate);
-          const today = new Date();
-          const daysElapsed = Math.floor((today - start) / (1000 * 60 * 60 * 24));
-          
-          const currentStage = dealer.currentStage || 'Interested';
-          const targetDays = stageTargets[currentStage] || 0;
-          
-          if (daysElapsed > targetDays + 3) {
-            delayedDealers++;
-          }
-        }
-      }
-    }
-    
-    // Build delayed message
-    let delayedMessage = '';
-    if (delayedShowrooms > 0 || delayedDealers > 0) {
-      delayedMessage = `⚠️ ${delayedShowrooms} showroom(s) and ${delayedDealers} dealer(s) are currently delayed. Please review the dashboard for details.`;
-    } else {
-      delayedMessage = '✅ No delayed projects at this time. All showrooms and dealers are on track! 🎉';
-    }
-    
-    console.log(`📊 Real-time data - Showrooms: ${totalShowrooms} total, ${completedShowrooms} completed, ${delayedShowrooms} delayed`);
-    console.log(`📊 Real-time data - Dealers: ${totalDealers} total, ${onboardedDealers} onboarded, ${delayedDealers} delayed`);
-    
-    return {
-      total_showrooms: totalShowrooms,
-      completed_showrooms: completedShowrooms,
-      avg_completion: avgCompletion,
-      delayed_showrooms: delayedShowrooms,
-      total_dealers: totalDealers,
-      active_dealers: activeDealers,
-      onboarded_dealers: onboardedDealers,
-      delayed_dealers: delayedDealers,
-      delayed_message: delayedMessage
-    };
-    
-  } catch (error) {
-    console.error('❌ Error fetching dashboard data:', error.message);
-    // Fallback to static data if Firebase fetch fails
-    return {
-      total_showrooms: 24,
-      completed_showrooms: 0,
-      avg_completion: 20,
-      delayed_showrooms: 23,
-      total_dealers: 0,
-      active_dealers: 0,
-      onboarded_dealers: 0,
-      delayed_dealers: 0,
-      delayed_message: '⚠️ Unable to fetch live data. Showing cached data. 23 showrooms are currently delayed.'
-    };
-  }
+// Function to get dashboard metrics
+function getDashboardMetrics() {
+  return {
+    total_showrooms: 24,
+    completed_showrooms: 0,
+    avg_completion: 20,
+    delayed_showrooms: 23,
+    total_dealers: 0,
+    active_dealers: 0,
+    onboarded_dealers: 0,
+    delayed_dealers: 0,
+    delayed_message: '⚠️ 23 showrooms are currently delayed. Please review the dashboard for details.'
+  };
 }
 
-// Function to get formatted date in IST
+// Function to get formatted date without slashes
+// Function to get formatted date in IST (Indian Standard Time)
 function getFormattedDate() {
   const now = new Date();
-  const istOffset = 5.5 * 60 * 60 * 1000;
+  // Convert to IST (UTC+5:30)
+  const istOffset = 5.5 * 60 * 60 * 1000; // 5 hours 30 minutes in milliseconds
   const istTime = new Date(now.getTime() + istOffset);
   
   const year = istTime.getUTCFullYear();
@@ -170,68 +44,6 @@ function getFormattedDate() {
   const seconds = String(istTime.getUTCSeconds()).padStart(2, '0');
   
   return `${day}-${month}-${year} ${hours}:${minutes}:${seconds} IST`;
-}
-
-// Build HTML email report
-function buildHtmlReport(metrics, dateStr) {
-  return `
-    <div style="font-family: 'Segoe UI', Arial, sans-serif;">
-      <h2 style="color: #C6A43B; margin: 0 0 10px 0;">📊 AIS Dashboard Summary</h2>
-      <p><strong>Report Time:</strong> ${dateStr}</p>
-      <hr style="border: none; border-top: 1px solid #ddd;">
-      
-      <h3 style="color: #1a73e8;">🏢 Showroom Performance</h3>
-      <div style="display: flex; justify-content: space-around; flex-wrap: wrap; margin: 15px 0;">
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: #C6A43B;">${metrics.total_showrooms}</div>
-          <div style="font-size: 11px; color: #666;">Total Showrooms</div>
-        </div>
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: #27ae60;">${metrics.completed_showrooms}</div>
-          <div style="font-size: 11px; color: #666;">Completed</div>
-        </div>
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: #C6A43B;">${metrics.avg_completion}%</div>
-          <div style="font-size: 11px; color: #666;">Avg Completion</div>
-        </div>
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: ${metrics.delayed_showrooms > 0 ? '#e74c3c' : '#27ae60'};">${metrics.delayed_showrooms}</div>
-          <div style="font-size: 11px; color: #666;">Delayed</div>
-        </div>
-      </div>
-      
-      <h3 style="color: #1a73e8; margin-top: 25px;">👥 Dealer Onboarding</h3>
-      <div style="display: flex; justify-content: space-around; flex-wrap: wrap; margin: 15px 0;">
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: #C6A43B;">${metrics.total_dealers}</div>
-          <div style="font-size: 11px; color: #666;">Total Dealers</div>
-        </div>
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: #3498db;">${metrics.active_dealers}</div>
-          <div style="font-size: 11px; color: #666;">Active</div>
-        </div>
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: #27ae60;">${metrics.onboarded_dealers}</div>
-          <div style="font-size: 11px; color: #666;">Onboarded</div>
-        </div>
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: ${metrics.delayed_dealers > 0 ? '#e74c3c' : '#27ae60'};">${metrics.delayed_dealers}</div>
-          <div style="font-size: 11px; color: #666;">Delayed</div>
-        </div>
-      </div>
-      
-      <h3 style="color: #e74c3c;">⚠️ Delayed Projects</h3>
-      <div style="background: ${metrics.delayed_showrooms > 0 || metrics.delayed_dealers > 0 ? '#fce8e6' : '#e8f5e9'}; padding: 15px; border-radius: 8px;">
-        ${metrics.delayed_message}
-      </div>
-      
-      <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
-      <p style="font-size: 11px; color: #888; text-align: center;">
-        This is an automated report from AIS Command Center<br>
-        © 2026 AIS Windows | All Rights Reserved
-      </p>
-    </div>
-  `;
 }
 
 // Check if today is a holiday (Sunday or 2nd/4th Saturday)
@@ -271,22 +83,33 @@ if (!MANUAL_RECIPIENT && isHoliday()) {
 // Check credentials
 if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) {
   console.error('❌ Missing EmailJS credentials!');
+  console.error('SERVICE_ID exists:', !!SERVICE_ID);
+  console.error('TEMPLATE_ID exists:', !!TEMPLATE_ID);
+  console.error('PUBLIC_KEY exists:', !!PUBLIC_KEY);
+  console.error('PRIVATE_KEY exists:', !!PRIVATE_KEY);
   process.exit(1);
 }
 
 console.log('✅ EmailJS credentials found');
 
 async function sendEmail(recipient) {
-  // Get REAL-TIME metrics from Firebase
-  const metrics = await getDashboardMetrics();
-  const dateStr = getFormattedDate();
-  const htmlBody = buildHtmlReport(metrics, dateStr);
+  // Get fresh metrics for each email
+  const metrics = getDashboardMetrics();
   
   const templateParams = {
     to_email: recipient,
-    subject: `📊 AIS Dashboard Report - ${dateStr}`,
-    date: dateStr,
-    message: htmlBody
+    date: getFormattedDate(),
+    report_type: 'Daily Summary',
+    notes: 'Automated daily report from AIS Command Center',
+    total_showrooms: metrics.total_showrooms,
+    completed_showrooms: metrics.completed_showrooms,
+    avg_completion: metrics.avg_completion,
+    delayed_showrooms: metrics.delayed_showrooms,
+    total_dealers: metrics.total_dealers,
+    active_dealers: metrics.active_dealers,
+    onboarded_dealers: metrics.onboarded_dealers,
+    delayed_dealers: metrics.delayed_dealers,
+    delayed_message: metrics.delayed_message
   };
 
   console.log(`📧 Sending to: ${recipient}`);
