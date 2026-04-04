@@ -98,6 +98,7 @@ async function sendEmail(recipient) {
   
   const templateParams = {
     to_email: recipient,
+    subject: `📊 AIS Dashboard Report - ${getFormattedDate()}`,
     date: getFormattedDate(),
     report_type: 'Daily Summary',
     notes: 'Automated daily report from AIS Command Center',
