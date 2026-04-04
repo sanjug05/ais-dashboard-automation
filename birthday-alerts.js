@@ -1,8 +1,7 @@
 // birthday-alerts.js
 const { google } = require('googleapis');
-const emailjs = require('@emailjs/nodejs');
 
-// EmailJS credentials
+// EmailJS credentials (using REST API, same as dashboard)
 const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const EMAILJS_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
@@ -14,7 +13,6 @@ const DEFAULT_RECIPIENTS = [
   'sanju.gupta@aisglass.com',
   'mayank.tomar@aisglass.com',
   'krishna.verma@aisglass.com',
-  'nidhi.tiwari@aisglass.com'
 ];
 
 // Configuration
@@ -209,7 +207,7 @@ async function getSheetData() {
   }
 }
 
-// Build simple HTML report
+// Build HTML report
 function buildHtmlReport(alerts, dateStr) {
   let html = `<!DOCTYPE html>
   <html>
@@ -281,7 +279,7 @@ function buildHtmlReport(alerts, dateStr) {
   return html;
 }
 
-// Send email using EmailJS
+// Send email using REST API (same method as working dashboard)
 async function sendEmail(recipient, htmlBody, dateStr) {
   const templateParams = {
     to_email: recipient,
@@ -290,25 +288,32 @@ async function sendEmail(recipient, htmlBody, dateStr) {
   };
 
   console.log(`📧 Sending to: ${recipient}`);
-  console.log(`📧 Service ID: ${EMAILJS_SERVICE_ID}`);
-  console.log(`📧 Template ID: ${EMAILJS_TEMPLATE_ID}`);
+  console.log(`📧 Using Service ID: ${EMAILJS_SERVICE_ID}`);
+  console.log(`📧 Using Template ID: ${EMAILJS_TEMPLATE_ID}`);
 
   try {
-    const response = await emailjs.send(
-      EMAILJS_SERVICE_ID,
-      EMAILJS_TEMPLATE_ID,
-      templateParams,
-      { publicKey: EMAILJS_PUBLIC_KEY, privateKey: EMAILJS_PRIVATE_KEY }
-    );
-    console.log(`✅ Success: ${recipient}`);
-    console.log(`📧 Response status: ${response?.status || 'OK'}`);
-    return true;
+    const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        service_id: EMAILJS_SERVICE_ID,
+        template_id: EMAILJS_TEMPLATE_ID,
+        user_id: EMAILJS_PUBLIC_KEY,
+        accessToken: EMAILJS_PRIVATE_KEY,
+        template_params: templateParams
+      })
+    });
+
+    if (response.ok) {
+      console.log(`✅ Success: ${recipient}`);
+      return true;
+    } else {
+      const errorText = await response.text();
+      console.error(`❌ Failed: ${recipient} - HTTP ${response.status}: ${errorText}`);
+      return false;
+    }
   } catch (error) {
-    console.error(`❌ Failed: ${recipient}`);
-    console.error(`❌ Error name: ${error.name}`);
-    console.error(`❌ Error message: ${error.message}`);
-    console.error(`❌ Error text: ${error.text}`);
-    console.error(`❌ Full error:`, JSON.stringify(error, null, 2));
+    console.error(`❌ Error: ${recipient} - ${error.message}`);
     return false;
   }
 }
