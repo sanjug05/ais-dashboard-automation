@@ -15,7 +15,7 @@ const DEFAULT_RECIPIENTS = [
 // Firebase configuration
 const FIREBASE_URL = 'https://ais-showroom-dashboard.firebaseio.com';
 
-// Phase configuration (same as dashboard)
+// EXACT Phase Configuration from your dashboard
 const PHASES_CONFIG = [
   { id: 'dim',      name: "Dimensions Submission",         days: 5  },
   { id: 'cad',      name: "CAD Preparation",                days: 12 },
@@ -27,7 +27,8 @@ const PHASES_CONFIG = [
   { id: 'launch',   name: "Final Handover / Launch",        days: 90 }
 ];
 
-// Dealer stages (same as dashboard)
+// EXACT Dealer stages from your dashboard
+const DEALER_STAGES = ['Interested', 'Shortlisted', 'CFT Selected', 'Documentation', 'Onboarded'];
 const STAGE_TARGETS = {
   'Interested': 0,
   'Shortlisted': 3,
@@ -36,18 +37,89 @@ const STAGE_TARGETS = {
   'Onboarded': 22
 };
 
+// EXACT helper functions from your dashboard
+function isDropped(dealer) {
+  const f = dealer.flags || {};
+  return dealer.status === 'Dropped' || f.cftRejected === true || f.prospectBackout === true;
+}
+
+function autoDetectStage(dealer) {
+  const docs = dealer.documents || {};
+  const DOC_KEYS = [
+    'securityDeposit', 'crmCharges', 'agreement', 'gst', 'pan',
+    'aadhaar', 'bankDetails', 'cheque', 'passportPhotos',
+    'companyRegistration', 'windowOrder', 'spaceFinalized'
+  ];
+  const anyDoc = DOC_KEYS.some(k => docs[k] === true);
+  const allDoc = DOC_KEYS.every(k => docs[k] === true);
+  if (allDoc) return 'Onboarded';
+  if (anyDoc) return 'Documentation';
+  if (dealer.stageLog?.['CFT Selected']) return 'CFT Selected';
+  if (dealer.stageLog?.['Shortlisted']) return 'Shortlisted';
+  return 'Interested';
+}
+
+// EXACT calculateShowroomStats from your dashboard
+function calculateShowroomStats(s) {
+  if (!s || !s.startDate) return { pct: 0, avgDelay: 0 };
+  const start = new Date(s.startDate + "T00:00:00");
+  const today = new Date(); 
+  today.setHours(0,0,0,0);
+  let totalDelay = 0, comp = 0, delayCount = 0;
+
+  if (isNaN(start.getTime())) return { pct: 0, avgDelay: 0 };
+
+  PHASES_CONFIG.forEach(p => {
+    const target = new Date(start);
+    target.setDate(start.getDate() + p.days);
+
+    const data = (s.data && s.data[p.id]) || {};
+    if (data.actualDate) {
+      comp++;
+      const actual = new Date(data.actualDate + "T00:00:00");
+      const d = Math.ceil((actual - target) / 86400000);
+      if (d > 0) {
+        totalDelay += d;
+        delayCount++;
+      }
+    } else {
+      const d = Math.ceil((today - target) / 86400000);
+      if (d > 0) {
+        totalDelay += d;
+        delayCount++;
+      }
+    }
+  });
+  
+  const avgDelay = delayCount > 0 ? Math.round(totalDelay / delayCount) : 0;
+  const pct = Math.round((comp / PHASES_CONFIG.length) * 100);
+  
+  return { pct, avgDelay };
+}
+
+// EXACT calculateDealerTimeline from your dashboard
+function calculateDealerTimeline(d) {
+  if (!d.startDate) return { diffText: "No Date", isDelayed: false, delayDays: 0 };
+  
+  const start = new Date(d.startDate);
+  const today = new Date();
+  const daysElapsed = Math.floor((today - start) / (1000 * 60 * 60 * 24));
+  
+  const currentStage = d.currentStage || autoDetectStage(d);
+  const targetDays = STAGE_TARGETS[currentStage] || 0;
+  const delayDays = Math.max(0, daysElapsed - targetDays);
+  const isDelayed = delayDays > 3;
+  
+  return { diffText: isDelayed ? `+${delayDays}d Delay` : "On Track", isDelayed, delayDays };
+}
+
 // Fetch showrooms from Firebase
 async function fetchShowrooms() {
   try {
     const response = await fetch(`${FIREBASE_URL}/showrooms.json`);
     const data = await response.json();
     if (!data) return [];
-    return Object.values(data).map(showroom => ({
-      id: showroom.id,
-      name: showroom.name || 'Unknown',
-      startDate: showroom.startDate,
-      data: showroom.data || {}
-    }));
+    return Object.values(data);
   } catch (error) {
     console.error('Error fetching showrooms:', error.message);
     return [];
@@ -60,89 +132,11 @@ async function fetchDealers() {
     const response = await fetch(`${FIREBASE_URL}/dealerOnboarding.json`);
     const data = await response.json();
     if (!data) return [];
-    return Object.values(data).map(dealer => ({
-      id: dealer.id,
-      name: dealer.name || 'Unknown',
-      city: dealer.city || 'N/A',
-      rm: dealer.rm || 'N/A',
-      status: dealer.status || 'Active',
-      currentStage: dealer.currentStage || 'Interested',
-      startDate: dealer.startDate,
-      documents: dealer.documents || {},
-      stageLog: dealer.stageLog || {},
-      flags: dealer.flags || {}
-    }));
+    return Object.values(data);
   } catch (error) {
     console.error('Error fetching dealers:', error.message);
     return [];
   }
-}
-
-// Check if dealer is dropped (same logic as dashboard)
-function isDealerDropped(dealer) {
-  const f = dealer.flags || {};
-  return dealer.status === 'Dropped' || f.cftRejected === true || f.prospectBackout === true;
-}
-
-// Calculate showroom completion percentage (same as dashboard's calculateShowroomStats)
-function calculateShowroomCompletion(showroom) {
-  if (!showroom || !showroom.startDate) return { pct: 0, avgDelay: 0 };
-  
-  const start = new Date(showroom.startDate + "T00:00:00");
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  
-  let totalDelay = 0;
-  let completedCount = 0;
-  let delayCount = 0;
-  
-  if (isNaN(start.getTime())) return { pct: 0, avgDelay: 0 };
-  
-  for (const phase of PHASES_CONFIG) {
-    const target = new Date(start);
-    target.setDate(start.getDate() + phase.days);
-    
-    const phaseData = (showroom.data && showroom.data[phase.id]) || {};
-    
-    if (phaseData.actualDate) {
-      completedCount++;
-      const actual = new Date(phaseData.actualDate + "T00:00:00");
-      const diff = Math.ceil((actual - target) / 86400000);
-      if (diff > 0) {
-        totalDelay += diff;
-        delayCount++;
-      }
-    } else {
-      const diff = Math.ceil((today - target) / 86400000);
-      if (diff > 0) {
-        totalDelay += diff;
-        delayCount++;
-      }
-    }
-  }
-  
-  const avgDelay = delayCount > 0 ? Math.round(totalDelay / delayCount) : 0;
-  const pct = Math.round((completedCount / PHASES_CONFIG.length) * 100);
-  
-  return { pct, avgDelay };
-}
-
-// Calculate dealer delay (same as dashboard's calculateDealerTimeline)
-function calculateDealerDelay(dealer) {
-  if (!dealer.startDate) return { isDelayed: false, delayDays: 0 };
-  if (dealer.status === 'Completed') return { isDelayed: false, delayDays: 0 };
-  if (isDealerDropped(dealer)) return { isDelayed: false, delayDays: 0 };
-  
-  const start = new Date(dealer.startDate);
-  const today = new Date();
-  const daysElapsed = Math.floor((today - start) / (1000 * 60 * 60 * 24));
-  
-  const currentStage = dealer.currentStage || 'Interested';
-  const targetDays = STAGE_TARGETS[currentStage] || 0;
-  const delayDays = Math.max(0, daysElapsed - targetDays);
-  const isDelayed = delayDays > 3;
-  
-  return { isDelayed, delayDays };
 }
 
 // Get formatted date in IST
@@ -161,75 +155,74 @@ function getFormattedDate() {
   return `${day}-${month}-${year} ${hours}:${minutes}:${seconds} IST`;
 }
 
-// Check holiday (Sunday or 2nd/4th Saturday)
+// Check holiday
 function isHoliday() {
   const today = new Date();
   const day = today.getDay();
   const date = today.getDate();
   
-  if (day === 0) {
-    console.log(`📅 ${today.toDateString()} is a Sunday (Holiday)`);
-    return true;
-  }
-  
+  if (day === 0) return true;
   if (day === 6) {
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const firstSaturday = firstDayOfMonth.getDay() === 6 ? 1 : 7 - firstDayOfMonth.getDay();
     const saturdayCount = Math.ceil((date - firstSaturday + 1) / 7);
-    
-    if (saturdayCount === 2 || saturdayCount === 4) {
-      console.log(`📅 ${today.toDateString()} is the ${saturdayCount}nd/4th Saturday (Holiday)`);
-      return true;
-    }
+    if (saturdayCount === 2 || saturdayCount === 4) return true;
   }
-  
   return false;
 }
 
 // Build HTML email report
 function buildHtmlReport(showrooms, dealers, dateStr) {
-  // Calculate showroom metrics
+  // Calculate showroom metrics using dashboard's exact function
   let totalShowrooms = showrooms.length;
-  let totalCompletionPct = 0;
+  let totalPct = 0;
   let completedShowrooms = 0;
-  let delayedShowrooms = 0;
+  let activeDelayCount = 0;
+  let totalAvgDelay = 0;
   
   for (const showroom of showrooms) {
-    const stats = calculateShowroomCompletion(showroom);
-    totalCompletionPct += stats.pct;
+    const stats = calculateShowroomStats(showroom);
+    totalPct += stats.pct;
     if (stats.pct === 100) completedShowrooms++;
-    if (stats.avgDelay > 0) delayedShowrooms++;
+    if (stats.avgDelay > 0) {
+      totalAvgDelay += stats.avgDelay;
+      activeDelayCount++;
+    }
   }
   
-  const avgCompletion = totalShowrooms > 0 ? Math.round(totalCompletionPct / totalShowrooms) : 0;
+  const avgCompletion = totalShowrooms > 0 ? Math.round(totalPct / totalShowrooms) : 0;
+  const globalAvgDelay = activeDelayCount > 0 ? Math.round(totalAvgDelay / activeDelayCount) : 0;
   
-  // Calculate dealer metrics
+  // Calculate dealer metrics using dashboard's exact function
   let totalDealers = dealers.length;
   let activeDealers = 0;
-  let onboardedDealers = 0;
+  let completedDealers = 0;
+  let droppedDealers = 0;
   let delayedDealers = 0;
   
   for (const dealer of dealers) {
     if (dealer.status === 'Completed') {
-      onboardedDealers++;
-    } else if (!isDealerDropped(dealer) && dealer.status === 'Active') {
+      completedDealers++;
+    } else if (isDropped(dealer)) {
+      droppedDealers++;
+    } else if (dealer.status === 'Active') {
       activeDealers++;
     }
     
-    const delay = calculateDealerDelay(dealer);
-    if (delay.isDelayed) delayedDealers++;
+    const timeline = calculateDealerTimeline(dealer);
+    if (timeline.isDelayed) delayedDealers++;
   }
   
   // Build delayed message
   let delayedMessage = '';
-  if (delayedShowrooms > 0 || delayedDealers > 0) {
-    delayedMessage = `⚠️ ${delayedShowrooms} showroom(s) and ${delayedDealers} dealer(s) are currently delayed. Please review the dashboard for details.`;
+  if (globalAvgDelay > 0 || delayedDealers > 0) {
+    delayedMessage = `⚠️ ${globalAvgDelay > 0 ? globalAvgDelay + ' showroom(s)' : ''}${globalAvgDelay > 0 && delayedDealers > 0 ? ' and ' : ''}${delayedDealers > 0 ? delayedDealers + ' dealer(s)' : ''} are currently delayed. Please review the dashboard for details.`;
   } else {
     delayedMessage = '✅ No delayed projects at this time. All showrooms and dealers are on track! 🎉';
   }
   
-  console.log(`📊 Showrooms: ${totalShowrooms} total, ${completedShowrooms} completed, ${delayedShowrooms} delayed`);
-  console.log(`📊 Dealers: ${totalDealers} total, ${onboardedDealers} onboarded, ${delayedDealers} delayed`);
+  console.log(`📊 Showrooms: ${totalShowrooms} total, ${completedShowrooms} completed, Avg Delay: ${globalAvgDelay}`);
+  console.log(`📊 Dealers: ${totalDealers} total, ${completedDealers} completed, ${delayedDealers} delayed`);
   
   return `
     <div style="font-family: 'Segoe UI', Arial, sans-serif;">
@@ -252,8 +245,8 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
           <div style="font-size: 11px; color: #666;">Avg Completion</div>
         </div>
         <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: ${delayedShowrooms > 0 ? '#e74c3c' : '#27ae60'};">${delayedShowrooms}</div>
-          <div style="font-size: 11px; color: #666;">Delayed</div>
+          <div style="font-size: 28px; font-weight: 800; color: ${globalAvgDelay > 0 ? '#e74c3c' : '#27ae60'};">${globalAvgDelay}</div>
+          <div style="font-size: 11px; color: #666;">Avg Delay (Days)</div>
         </div>
       </div>
       
@@ -268,7 +261,7 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
           <div style="font-size: 11px; color: #666;">Active</div>
         </div>
         <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: #27ae60;">${onboardedDealers}</div>
+          <div style="font-size: 28px; font-weight: 800; color: #27ae60;">${completedDealers}</div>
           <div style="font-size: 11px; color: #666;">Onboarded</div>
         </div>
         <div style="text-align: center; flex: 1; min-width: 100px;">
@@ -278,7 +271,7 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
       </div>
       
       <h3 style="color: #e74c3c;">⚠️ Delayed Projects</h3>
-      <div style="background: ${delayedShowrooms > 0 || delayedDealers > 0 ? '#fce8e6' : '#e8f5e9'}; padding: 15px; border-radius: 8px;">
+      <div style="background: ${globalAvgDelay > 0 || delayedDealers > 0 ? '#fce8e6' : '#e8f5e9'}; padding: 15px; border-radius: 8px;">
         ${delayedMessage}
       </div>
       
@@ -291,7 +284,7 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
   `;
 }
 
-// Send email using REST API
+// Send email
 async function sendEmail(recipient, htmlBody, dateStr) {
   const templateParams = {
     to_email: recipient,
@@ -335,13 +328,11 @@ async function main() {
   const dateStr = getFormattedDate();
   console.log(`Time: ${dateStr}`);
   
-  // Skip on holidays for automated runs
   if (!MANUAL_RECIPIENT && isHoliday()) {
     console.log('📅 Today is a holiday. Skipping automated email report.');
     process.exit(0);
   }
   
-  // Check credentials
   if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) {
     console.error('❌ Missing EmailJS credentials!');
     process.exit(1);
@@ -349,7 +340,6 @@ async function main() {
   
   console.log('✅ EmailJS credentials found');
   
-  // Fetch real-time data from Firebase
   console.log('📡 Fetching showrooms from Firebase...');
   const showrooms = await fetchShowrooms();
   console.log(`📡 Found ${showrooms.length} showrooms`);
@@ -358,10 +348,8 @@ async function main() {
   const dealers = await fetchDealers();
   console.log(`📡 Found ${dealers.length} dealers`);
   
-  // Build email
   const htmlBody = buildHtmlReport(showrooms, dealers, dateStr);
   
-  // Determine recipients
   let recipients = MANUAL_RECIPIENT && MANUAL_RECIPIENT.trim() 
     ? [MANUAL_RECIPIENT] 
     : DEFAULT_RECIPIENTS;
@@ -376,15 +364,8 @@ async function main() {
   }
   
   console.log(`\n📬 Done: ${successCount}/${recipients.length} successful`);
-  if (successCount === 0) {
-    console.error('❌ No emails were sent successfully');
-    process.exit(1);
-  }
+  if (successCount === 0) process.exit(1);
   console.log('🎉 All emails sent successfully!');
 }
 
-// Run the script
-main().catch(err => { 
-  console.error('❌ Script error:', err); 
-  process.exit(1); 
-});
+main().catch(err => { console.error('❌ Script error:', err); process.exit(1); });
