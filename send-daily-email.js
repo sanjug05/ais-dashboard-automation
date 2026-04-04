@@ -12,8 +12,59 @@ const DEFAULT_RECIPIENTS = [
   'nidhi.tiwari@aisglass.com'
 ];
 
-// Firebase configuration
-const FIREBASE_URL = 'https://ais-showroom-dashboard.firebaseio.com';
+// Firestore REST API endpoint (not Realtime Database)
+const FIRESTORE_URL = 'https://firestore.googleapis.com/v1/projects/ais-showroom-dashboard/databases/(default)/documents';
+
+// Helper to fetch Firestore collection
+async function fetchCollection(collectionName) {
+  try {
+    const response = await fetch(`${FIRESTORE_URL}/${collectionName}`);
+    const data = await response.json();
+    
+    if (!data.documents) return [];
+    
+    // Parse Firestore document format
+    return data.documents.map(doc => {
+      const fields = doc.fields;
+      const result = { id: doc.name.split('/').pop() };
+      
+      // Convert Firestore fields to JavaScript values
+      for (const [key, value] of Object.entries(fields)) {
+        if (value.stringValue !== undefined) result[key] = value.stringValue;
+        else if (value.integerValue !== undefined) result[key] = parseInt(value.integerValue);
+        else if (value.doubleValue !== undefined) result[key] = parseFloat(value.doubleValue);
+        else if (value.booleanValue !== undefined) result[key] = value.booleanValue;
+        else if (value.mapValue !== undefined) {
+          // Handle nested objects (like data, documents, stageLog, flags)
+          const nestedObj = {};
+          if (value.mapValue.fields) {
+            for (const [nestedKey, nestedValue] of Object.entries(value.mapValue.fields)) {
+              if (nestedValue.stringValue !== undefined) nestedObj[nestedKey] = nestedValue.stringValue;
+              else if (nestedValue.booleanValue !== undefined) nestedObj[nestedKey] = nestedValue.booleanValue;
+              else if (nestedValue.mapValue !== undefined) {
+                // Deep nested (for phase data)
+                const deepObj = {};
+                if (nestedValue.mapValue.fields) {
+                  for (const [deepKey, deepValue] of Object.entries(nestedValue.mapValue.fields)) {
+                    if (deepValue.stringValue !== undefined) deepObj[deepKey] = deepValue.stringValue;
+                  }
+                }
+                nestedObj[nestedKey] = deepObj;
+              }
+            }
+          }
+          result[key] = nestedObj;
+        }
+        else if (value.arrayValue !== undefined) result[key] = value.arrayValue.values || [];
+        else if (value.nullValue !== undefined) result[key] = null;
+      }
+      return result;
+    });
+  } catch (error) {
+    console.error(`Error fetching ${collectionName}:`, error.message);
+    return [];
+  }
+}
 
 // EXACT Phase Configuration from your dashboard
 const PHASES_CONFIG = [
@@ -27,8 +78,7 @@ const PHASES_CONFIG = [
   { id: 'launch',   name: "Final Handover / Launch",        days: 90 }
 ];
 
-// EXACT Dealer stages from your dashboard
-const DEALER_STAGES = ['Interested', 'Shortlisted', 'CFT Selected', 'Documentation', 'Onboarded'];
+// Dealer stages
 const STAGE_TARGETS = {
   'Interested': 0,
   'Shortlisted': 3,
@@ -36,28 +86,6 @@ const STAGE_TARGETS = {
   'Documentation': 15,
   'Onboarded': 22
 };
-
-// EXACT helper functions from your dashboard
-function isDropped(dealer) {
-  const f = dealer.flags || {};
-  return dealer.status === 'Dropped' || f.cftRejected === true || f.prospectBackout === true;
-}
-
-function autoDetectStage(dealer) {
-  const docs = dealer.documents || {};
-  const DOC_KEYS = [
-    'securityDeposit', 'crmCharges', 'agreement', 'gst', 'pan',
-    'aadhaar', 'bankDetails', 'cheque', 'passportPhotos',
-    'companyRegistration', 'windowOrder', 'spaceFinalized'
-  ];
-  const anyDoc = DOC_KEYS.some(k => docs[k] === true);
-  const allDoc = DOC_KEYS.every(k => docs[k] === true);
-  if (allDoc) return 'Onboarded';
-  if (anyDoc) return 'Documentation';
-  if (dealer.stageLog?.['CFT Selected']) return 'CFT Selected';
-  if (dealer.stageLog?.['Shortlisted']) return 'Shortlisted';
-  return 'Interested';
-}
 
 // EXACT calculateShowroomStats from your dashboard
 function calculateShowroomStats(s) {
@@ -97,46 +125,26 @@ function calculateShowroomStats(s) {
   return { pct, avgDelay };
 }
 
-// EXACT calculateDealerTimeline from your dashboard
+// Check if dealer is dropped
+function isDropped(dealer) {
+  const f = dealer.flags || {};
+  return dealer.status === 'Dropped' || f.cftRejected === true || f.prospectBackout === true;
+}
+
+// Calculate dealer delay
 function calculateDealerTimeline(d) {
-  if (!d.startDate) return { diffText: "No Date", isDelayed: false, delayDays: 0 };
+  if (!d.startDate) return { isDelayed: false, delayDays: 0 };
   
   const start = new Date(d.startDate);
   const today = new Date();
   const daysElapsed = Math.floor((today - start) / (1000 * 60 * 60 * 24));
   
-  const currentStage = d.currentStage || autoDetectStage(d);
+  const currentStage = d.currentStage || 'Interested';
   const targetDays = STAGE_TARGETS[currentStage] || 0;
   const delayDays = Math.max(0, daysElapsed - targetDays);
   const isDelayed = delayDays > 3;
   
-  return { diffText: isDelayed ? `+${delayDays}d Delay` : "On Track", isDelayed, delayDays };
-}
-
-// Fetch showrooms from Firebase
-async function fetchShowrooms() {
-  try {
-    const response = await fetch(`${FIREBASE_URL}/showrooms.json`);
-    const data = await response.json();
-    if (!data) return [];
-    return Object.values(data);
-  } catch (error) {
-    console.error('Error fetching showrooms:', error.message);
-    return [];
-  }
-}
-
-// Fetch dealers from Firebase
-async function fetchDealers() {
-  try {
-    const response = await fetch(`${FIREBASE_URL}/dealerOnboarding.json`);
-    const data = await response.json();
-    if (!data) return [];
-    return Object.values(data);
-  } catch (error) {
-    console.error('Error fetching dealers:', error.message);
-    return [];
-  }
+  return { isDelayed, delayDays };
 }
 
 // Get formatted date in IST
@@ -171,9 +179,8 @@ function isHoliday() {
   return false;
 }
 
-// Build HTML email report
+// Build HTML email
 function buildHtmlReport(showrooms, dealers, dateStr) {
-  // Calculate showroom metrics using dashboard's exact function
   let totalShowrooms = showrooms.length;
   let totalPct = 0;
   let completedShowrooms = 0;
@@ -193,19 +200,15 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
   const avgCompletion = totalShowrooms > 0 ? Math.round(totalPct / totalShowrooms) : 0;
   const globalAvgDelay = activeDelayCount > 0 ? Math.round(totalAvgDelay / activeDelayCount) : 0;
   
-  // Calculate dealer metrics using dashboard's exact function
   let totalDealers = dealers.length;
   let activeDealers = 0;
   let completedDealers = 0;
-  let droppedDealers = 0;
   let delayedDealers = 0;
   
   for (const dealer of dealers) {
     if (dealer.status === 'Completed') {
       completedDealers++;
-    } else if (isDropped(dealer)) {
-      droppedDealers++;
-    } else if (dealer.status === 'Active') {
+    } else if (!isDropped(dealer) && dealer.status === 'Active') {
       activeDealers++;
     }
     
@@ -213,7 +216,6 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
     if (timeline.isDelayed) delayedDealers++;
   }
   
-  // Build delayed message
   let delayedMessage = '';
   if (globalAvgDelay > 0 || delayedDealers > 0) {
     delayedMessage = `⚠️ ${globalAvgDelay > 0 ? globalAvgDelay + ' showroom(s)' : ''}${globalAvgDelay > 0 && delayedDealers > 0 ? ' and ' : ''}${delayedDealers > 0 ? delayedDealers + ' dealer(s)' : ''} are currently delayed. Please review the dashboard for details.`;
@@ -226,60 +228,27 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
   
   return `
     <div style="font-family: 'Segoe UI', Arial, sans-serif;">
-      <h2 style="color: #C6A43B; margin: 0 0 10px 0;">📊 AIS Dashboard Summary</h2>
+      <h2 style="color: #C6A43B;">📊 AIS Dashboard Summary</h2>
       <p><strong>Report Time:</strong> ${dateStr}</p>
-      <hr style="border: none; border-top: 1px solid #ddd;">
-      
-      <h3 style="color: #1a73e8;">🏢 Showroom Performance</h3>
-      <div style="display: flex; justify-content: space-around; flex-wrap: wrap; margin: 15px 0;">
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: #C6A43B;">${totalShowrooms}</div>
-          <div style="font-size: 11px; color: #666;">Total Showrooms</div>
-        </div>
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: #27ae60;">${completedShowrooms}</div>
-          <div style="font-size: 11px; color: #666;">Completed</div>
-        </div>
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: #C6A43B;">${avgCompletion}%</div>
-          <div style="font-size: 11px; color: #666;">Avg Completion</div>
-        </div>
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: ${globalAvgDelay > 0 ? '#e74c3c' : '#27ae60'};">${globalAvgDelay}</div>
-          <div style="font-size: 11px; color: #666;">Avg Delay (Days)</div>
-        </div>
+      <hr>
+      <h3>🏢 Showroom Performance</h3>
+      <div style="display: flex; justify-content: space-around; flex-wrap: wrap;">
+        <div><strong>Total:</strong> ${totalShowrooms}</div>
+        <div><strong>Completed:</strong> ${completedShowrooms}</div>
+        <div><strong>Avg Completion:</strong> ${avgCompletion}%</div>
+        <div><strong>Avg Delay:</strong> ${globalAvgDelay} days</div>
       </div>
-      
-      <h3 style="color: #1a73e8; margin-top: 25px;">👥 Dealer Onboarding</h3>
-      <div style="display: flex; justify-content: space-around; flex-wrap: wrap; margin: 15px 0;">
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: #C6A43B;">${totalDealers}</div>
-          <div style="font-size: 11px; color: #666;">Total Dealers</div>
-        </div>
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: #3498db;">${activeDealers}</div>
-          <div style="font-size: 11px; color: #666;">Active</div>
-        </div>
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: #27ae60;">${completedDealers}</div>
-          <div style="font-size: 11px; color: #666;">Onboarded</div>
-        </div>
-        <div style="text-align: center; flex: 1; min-width: 100px;">
-          <div style="font-size: 28px; font-weight: 800; color: ${delayedDealers > 0 ? '#e74c3c' : '#27ae60'};">${delayedDealers}</div>
-          <div style="font-size: 11px; color: #666;">Delayed</div>
-        </div>
+      <h3>👥 Dealer Onboarding</h3>
+      <div style="display: flex; justify-content: space-around; flex-wrap: wrap;">
+        <div><strong>Total:</strong> ${totalDealers}</div>
+        <div><strong>Active:</strong> ${activeDealers}</div>
+        <div><strong>Onboarded:</strong> ${completedDealers}</div>
+        <div><strong>Delayed:</strong> ${delayedDealers}</div>
       </div>
-      
-      <h3 style="color: #e74c3c;">⚠️ Delayed Projects</h3>
-      <div style="background: ${globalAvgDelay > 0 || delayedDealers > 0 ? '#fce8e6' : '#e8f5e9'}; padding: 15px; border-radius: 8px;">
-        ${delayedMessage}
-      </div>
-      
-      <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
-      <p style="font-size: 11px; color: #888; text-align: center;">
-        This is an automated report from AIS Command Center<br>
-        © 2026 AIS Windows | All Rights Reserved
-      </p>
+      <h3>⚠️ Delayed Projects</h3>
+      <p>${delayedMessage}</p>
+      <hr>
+      <p style="font-size: 10px;">AIS Command Center</p>
     </div>
   `;
 }
@@ -313,7 +282,7 @@ async function sendEmail(recipient, htmlBody, dateStr) {
       return true;
     } else {
       const errorText = await response.text();
-      console.error(`❌ Failed: ${recipient} - HTTP ${response.status}: ${errorText}`);
+      console.error(`❌ Failed: ${recipient} - ${errorText}`);
       return false;
     }
   } catch (error) {
@@ -340,12 +309,12 @@ async function main() {
   
   console.log('✅ EmailJS credentials found');
   
-  console.log('📡 Fetching showrooms from Firebase...');
-  const showrooms = await fetchShowrooms();
+  console.log('📡 Fetching showrooms from Firestore...');
+  const showrooms = await fetchCollection('showrooms');
   console.log(`📡 Found ${showrooms.length} showrooms`);
   
-  console.log('📡 Fetching dealers from Firebase...');
-  const dealers = await fetchDealers();
+  console.log('📡 Fetching dealers from Firestore...');
+  const dealers = await fetchCollection('dealerOnboarding');
   console.log(`📡 Found ${dealers.length} dealers`);
   
   const htmlBody = buildHtmlReport(showrooms, dealers, dateStr);
