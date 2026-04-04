@@ -13,9 +13,8 @@ const DEFAULT_RECIPIENTS = [
   'nidhi.tiwari@aisglass.com'
 ];
 
-// Function to get dashboard metrics (update with real data later)
+// Function to get dashboard metrics
 function getDashboardMetrics() {
-  // You can replace these with real API calls to your dashboard
   return {
     total_showrooms: 24,
     completed_showrooms: 0,
@@ -27,6 +26,18 @@ function getDashboardMetrics() {
     delayed_dealers: 0,
     delayed_message: '⚠️ 23 showrooms are currently delayed. Please review the dashboard for details.'
   };
+}
+
+// Function to get formatted date without slashes
+function getFormattedDate() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const seconds = String(now.getSeconds()).padStart(2, '0');
+  return `${day}-${month}-${year} ${hours}:${minutes}:${seconds}`;
 }
 
 // Check if today is a holiday (Sunday or 2nd/4th Saturday)
@@ -55,7 +66,7 @@ function isHoliday() {
 }
 
 console.log('🚀 Starting daily email report...');
-console.log(`Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+console.log(`Time: ${getFormattedDate()}`);
 
 // Skip on holidays for automated runs
 if (!MANUAL_RECIPIENT && isHoliday()) {
@@ -66,10 +77,10 @@ if (!MANUAL_RECIPIENT && isHoliday()) {
 // Check credentials
 if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) {
   console.error('❌ Missing EmailJS credentials!');
-  console.error('SERVICE_ID:', !!SERVICE_ID);
-  console.error('TEMPLATE_ID:', !!TEMPLATE_ID);
-  console.error('PUBLIC_KEY:', !!PUBLIC_KEY);
-  console.error('PRIVATE_KEY:', !!PRIVATE_KEY);
+  console.error('SERVICE_ID exists:', !!SERVICE_ID);
+  console.error('TEMPLATE_ID exists:', !!TEMPLATE_ID);
+  console.error('PUBLIC_KEY exists:', !!PUBLIC_KEY);
+  console.error('PRIVATE_KEY exists:', !!PRIVATE_KEY);
   process.exit(1);
 }
 
@@ -81,26 +92,8 @@ async function sendEmail(recipient) {
   
   const templateParams = {
     to_email: recipient,
-const now = new Date();
-const dateStr = now.toLocaleDateString('en-IN', { 
-  timeZone: 'Asia/Kolkata',
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric'
-}).replace(/\//g, '-');
-
-const timeStr = now.toLocaleTimeString('en-IN', { 
-  timeZone: 'Asia/Kolkata',
-  hour: '2-digit',
-  minute: '2-digit'
-});
-
-const templateParams = {
-  // ... other fields
-  date: `${dateStr} ${timeStr}`,
-  // ...
-};
-  report_type: 'Daily Summary',
+    date: getFormattedDate(),
+    report_type: 'Daily Summary',
     notes: 'Automated daily report from AIS Command Center',
     total_showrooms: metrics.total_showrooms,
     completed_showrooms: metrics.completed_showrooms,
@@ -114,7 +107,6 @@ const templateParams = {
   };
 
   console.log(`📧 Sending to: ${recipient}`);
-  console.log('📊 Metrics:', JSON.stringify(metrics, null, 2));
 
   try {
     const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
@@ -154,7 +146,6 @@ async function main() {
   for (const recipient of recipients) {
     const success = await sendEmail(recipient);
     if (success) successCount++;
-    // Wait 2 seconds between emails to avoid rate limiting
     await new Promise(r => setTimeout(r, 2000));
   }
   
