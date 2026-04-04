@@ -13,21 +13,144 @@ const DEFAULT_RECIPIENTS = [
   'nidhi.tiwari@aisglass.com'
 ];
 
-// Function to get dashboard metrics
-function getDashboardMetrics() {
-  // TODO: Replace with actual API call to your dashboard data
-  // For now, showing sample data with "no data" message
-  return {
-    total_showrooms: 0,
-    completed_showrooms: 0,
-    avg_completion: 0,
-    delayed_showrooms: 0,
-    total_dealers: 0,
-    active_dealers: 0,
-    onboarded_dealers: 0,
-    delayed_dealers: 0,
-    delayed_message: '✅ No delayed projects at this time. All showrooms and dealers are on track! 🎉'
-  };
+// Function to get dashboard metrics - FETCHES REAL DATA FROM FIREBASE
+async function getDashboardMetrics() {
+  try {
+    console.log('📡 Fetching showrooms from Firebase...');
+    const showroomsResponse = await fetch('https://ais-showroom-dashboard.firebaseio.com/showrooms.json');
+    const showrooms = await showroomsResponse.json();
+    
+    console.log('📡 Fetching dealers from Firebase...');
+    const dealersResponse = await fetch('https://ais-showroom-dashboard.firebaseio.com/dealerOnboarding.json');
+    const dealers = await dealersResponse.json();
+    
+    // Calculate showroom metrics
+    let totalShowrooms = 0;
+    let completedShowrooms = 0;
+    let totalCompletionPct = 0;
+    let delayedShowrooms = 0;
+    
+    const phaseKeys = ['dim', 'cad', 'plan', 'civil', 'interior', 'brand', 'window', 'launch'];
+    const totalPhases = phaseKeys.length;
+    
+    if (showrooms) {
+      const showroomsList = Object.values(showrooms);
+      totalShowrooms = showroomsList.length;
+      
+      for (const showroom of showroomsList) {
+        const phases = showroom.data || {};
+        let completedPhases = 0;
+        
+        for (const phase of phaseKeys) {
+          if (phases[phase] && phases[phase].actualDate) {
+            completedPhases++;
+          }
+        }
+        
+        const completionPct = Math.round((completedPhases / totalPhases) * 100);
+        totalCompletionPct += completionPct;
+        
+        if (completionPct === 100) {
+          completedShowrooms++;
+        }
+        
+        // Check for delays (if start date exists)
+        if (showroom.startDate) {
+          const start = new Date(showroom.startDate);
+          const today = new Date();
+          const daysElapsed = Math.floor((today - start) / (1000 * 60 * 60 * 24));
+          const expectedProgress = Math.min(100, Math.round((daysElapsed / 90) * 100));
+          
+          if (completionPct < expectedProgress - 15) {
+            delayedShowrooms++;
+          }
+        }
+      }
+    }
+    
+    const avgCompletion = totalShowrooms > 0 ? Math.round(totalCompletionPct / totalShowrooms) : 0;
+    
+    // Calculate dealer metrics
+    let totalDealers = 0;
+    let activeDealers = 0;
+    let onboardedDealers = 0;
+    let delayedDealers = 0;
+    
+    const stageTargets = {
+      'Interested': 0,
+      'Shortlisted': 3,
+      'CFT Selected': 8,
+      'Documentation': 15,
+      'Onboarded': 22
+    };
+    
+    if (dealers) {
+      const dealersList = Object.values(dealers);
+      totalDealers = dealersList.length;
+      
+      for (const dealer of dealersList) {
+        // Count active dealers (not dropped, not completed)
+        const isDropped = dealer.status === 'Dropped' || dealer.flags?.cftRejected === true || dealer.flags?.prospectBackout === true;
+        
+        if (dealer.status === 'Completed') {
+          onboardedDealers++;
+        } else if (!isDropped && dealer.status === 'Active') {
+          activeDealers++;
+        }
+        
+        // Check for delays
+        if (dealer.startDate && dealer.status !== 'Completed' && !isDropped) {
+          const start = new Date(dealer.startDate);
+          const today = new Date();
+          const daysElapsed = Math.floor((today - start) / (1000 * 60 * 60 * 24));
+          
+          const currentStage = dealer.currentStage || 'Interested';
+          const targetDays = stageTargets[currentStage] || 0;
+          
+          if (daysElapsed > targetDays + 3) {
+            delayedDealers++;
+          }
+        }
+      }
+    }
+    
+    // Build delayed message
+    let delayedMessage = '';
+    if (delayedShowrooms > 0 || delayedDealers > 0) {
+      delayedMessage = `⚠️ ${delayedShowrooms} showroom(s) and ${delayedDealers} dealer(s) are currently delayed. Please review the dashboard for details.`;
+    } else {
+      delayedMessage = '✅ No delayed projects at this time. All showrooms and dealers are on track! 🎉';
+    }
+    
+    console.log(`📊 Showrooms: ${totalShowrooms} total, ${completedShowrooms} completed, ${delayedShowrooms} delayed`);
+    console.log(`📊 Dealers: ${totalDealers} total, ${onboardedDealers} onboarded, ${delayedDealers} delayed`);
+    
+    return {
+      total_showrooms: totalShowrooms,
+      completed_showrooms: completedShowrooms,
+      avg_completion: avgCompletion,
+      delayed_showrooms: delayedShowrooms,
+      total_dealers: totalDealers,
+      active_dealers: activeDealers,
+      onboarded_dealers: onboardedDealers,
+      delayed_dealers: delayedDealers,
+      delayed_message: delayedMessage
+    };
+    
+  } catch (error) {
+    console.error('❌ Error fetching dashboard data:', error.message);
+    return {
+      total_showrooms: 0,
+      completed_showrooms: 0,
+      avg_completion: 0,
+      delayed_showrooms: 0,
+      total_dealers: 0,
+      active_dealers: 0,
+      onboarded_dealers: 0,
+      delayed_dealers: 0,
+      delayed_message: '⚠️ Unable to fetch dashboard data. Please check your connection.'
+    };
+  }
 }
 
 // Function to get formatted date in IST
@@ -129,7 +252,11 @@ function buildHtmlReport(metrics, dateStr) {
 }
 
 // Send email using REST API
-async function sendEmail(recipient, htmlBody, dateStr) {
+async function sendEmail(recipient, dateStr) {
+  // Get fresh metrics for each email
+  const metrics = await getDashboardMetrics();
+  const htmlBody = buildHtmlReport(metrics, dateStr);
+  
   const templateParams = {
     to_email: recipient,
     subject: `📊 AIS Dashboard Report - ${dateStr}`,
@@ -166,7 +293,7 @@ async function sendEmail(recipient, htmlBody, dateStr) {
   }
 }
 
-// Check if today is a holiday
+// Check if today is a holiday (Sunday or 2nd/4th Saturday)
 function isHoliday() {
   const today = new Date();
   const day = today.getDay();
@@ -206,17 +333,14 @@ async function main() {
   // Check credentials
   if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) {
     console.error('❌ Missing EmailJS credentials!');
+    console.error('SERVICE_ID exists:', !!SERVICE_ID);
+    console.error('TEMPLATE_ID exists:', !!TEMPLATE_ID);
+    console.error('PUBLIC_KEY exists:', !!PUBLIC_KEY);
+    console.error('PRIVATE_KEY exists:', !!PRIVATE_KEY);
     process.exit(1);
   }
   
   console.log('✅ EmailJS credentials found');
-  
-  // Get dashboard metrics
-  const metrics = getDashboardMetrics();
-  console.log('📊 Metrics collected');
-  
-  // Build email
-  const htmlBody = buildHtmlReport(metrics, dateStr);
   
   // Determine recipients
   let recipients = MANUAL_RECIPIENT && MANUAL_RECIPIENT.trim() 
@@ -227,7 +351,7 @@ async function main() {
   
   let successCount = 0;
   for (const recipient of recipients) {
-    const success = await sendEmail(recipient, htmlBody, dateStr);
+    const success = await sendEmail(recipient, dateStr);
     if (success) successCount++;
     await new Promise(r => setTimeout(r, 2000));
   }
