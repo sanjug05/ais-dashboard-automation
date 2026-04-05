@@ -224,7 +224,7 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
     delayedMessage = '✅ No delayed projects at this time. All showrooms and dealers are on track! 🎉';
   }
   
-  console.log(`📊 SShowrooms Days: ${totalShowroomsDays} total, ${completedShowroomsDays} completed, Avg Delay: ${globalAvgDelay}`);
+  console.log(`📊 Showrooms Days: ${totalShowroomsDays} total, ${completedShowroomsDays} completed, Avg Delay: ${globalAvgDelay}`);
   console.log(`📊 Dealers: ${totalDealers} total, ${completedDealers} completed, ${delayedDealers} delayed`);
   
   return `
