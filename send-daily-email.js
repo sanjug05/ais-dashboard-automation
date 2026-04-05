@@ -1,4 +1,6 @@
 // send-daily-email.js
+const fs = require('fs');
+const path = require('path');
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
@@ -12,61 +14,10 @@ const DEFAULT_RECIPIENTS = [
   'nidhi.tiwari@aisglass.com'
 ];
 
-// Firestore REST API endpoint (not Realtime Database)
-const FIRESTORE_URL = 'https://firestore.googleapis.com/v1/projects/ais-showroom-dashboard/databases/(default)/documents';
+// Firebase configuration
+const FIREBASE_URL = 'https://ais-showroom-dashboard.firebaseio.com';
 
-// Helper to fetch Firestore collection
-async function fetchCollection(collectionName) {
-  try {
-    const response = await fetch(`${FIRESTORE_URL}/${collectionName}`);
-    const data = await response.json();
-    
-    if (!data.documents) return [];
-    
-    // Parse Firestore document format
-    return data.documents.map(doc => {
-      const fields = doc.fields;
-      const result = { id: doc.name.split('/').pop() };
-      
-      // Convert Firestore fields to JavaScript values
-      for (const [key, value] of Object.entries(fields)) {
-        if (value.stringValue !== undefined) result[key] = value.stringValue;
-        else if (value.integerValue !== undefined) result[key] = parseInt(value.integerValue);
-        else if (value.doubleValue !== undefined) result[key] = parseFloat(value.doubleValue);
-        else if (value.booleanValue !== undefined) result[key] = value.booleanValue;
-        else if (value.mapValue !== undefined) {
-          // Handle nested objects (like data, documents, stageLog, flags)
-          const nestedObj = {};
-          if (value.mapValue.fields) {
-            for (const [nestedKey, nestedValue] of Object.entries(value.mapValue.fields)) {
-              if (nestedValue.stringValue !== undefined) nestedObj[nestedKey] = nestedValue.stringValue;
-              else if (nestedValue.booleanValue !== undefined) nestedObj[nestedKey] = nestedValue.booleanValue;
-              else if (nestedValue.mapValue !== undefined) {
-                // Deep nested (for phase data)
-                const deepObj = {};
-                if (nestedValue.mapValue.fields) {
-                  for (const [deepKey, deepValue] of Object.entries(nestedValue.mapValue.fields)) {
-                    if (deepValue.stringValue !== undefined) deepObj[deepKey] = deepValue.stringValue;
-                  }
-                }
-                nestedObj[nestedKey] = deepObj;
-              }
-            }
-          }
-          result[key] = nestedObj;
-        }
-        else if (value.arrayValue !== undefined) result[key] = value.arrayValue.values || [];
-        else if (value.nullValue !== undefined) result[key] = null;
-      }
-      return result;
-    });
-  } catch (error) {
-    console.error(`Error fetching ${collectionName}:`, error.message);
-    return [];
-  }
-}
-
-// EXACT Phase Configuration from your dashboard
+// Phase configuration
 const PHASES_CONFIG = [
   { id: 'dim',      name: "Dimensions Submission",         days: 5  },
   { id: 'cad',      name: "CAD Preparation",                days: 12 },
@@ -87,7 +38,12 @@ const STAGE_TARGETS = {
   'Onboarded': 22
 };
 
-// EXACT calculateShowroomStats from your dashboard
+// Helper functions
+function isDropped(dealer) {
+  const f = dealer.flags || {};
+  return dealer.status === 'Dropped' || f.cftRejected === true || f.prospectBackout === true;
+}
+
 function calculateShowroomStats(s) {
   if (!s || !s.startDate) return { pct: 0, avgDelay: 0 };
   const start = new Date(s.startDate + "T00:00:00");
@@ -125,15 +81,10 @@ function calculateShowroomStats(s) {
   return { pct, avgDelay };
 }
 
-// Check if dealer is dropped
-function isDropped(dealer) {
-  const f = dealer.flags || {};
-  return dealer.status === 'Dropped' || f.cftRejected === true || f.prospectBackout === true;
-}
-
-// Calculate dealer delay
 function calculateDealerTimeline(d) {
   if (!d.startDate) return { isDelayed: false, delayDays: 0 };
+  if (d.status === 'Completed') return { isDelayed: false, delayDays: 0 };
+  if (isDropped(d)) return { isDelayed: false, delayDays: 0 };
   
   const start = new Date(d.startDate);
   const today = new Date();
@@ -145,6 +96,32 @@ function calculateDealerTimeline(d) {
   const isDelayed = delayDays > 3;
   
   return { isDelayed, delayDays };
+}
+
+// Fetch showrooms from Firebase
+async function fetchShowrooms() {
+  try {
+    const response = await fetch(`${FIREBASE_URL}/showrooms.json`);
+    const data = await response.json();
+    if (!data) return [];
+    return Object.values(data);
+  } catch (error) {
+    console.error('Error fetching showrooms:', error.message);
+    return [];
+  }
+}
+
+// Fetch dealers from Firebase
+async function fetchDealers() {
+  try {
+    const response = await fetch(`${FIREBASE_URL}/dealerOnboarding.json`);
+    const data = await response.json();
+    if (!data) return [];
+    return Object.values(data);
+  } catch (error) {
+    console.error('Error fetching dealers:', error.message);
+    return [];
+  }
 }
 
 // Get formatted date in IST
@@ -179,8 +156,12 @@ function isHoliday() {
   return false;
 }
 
-// Build HTML email
+// Load and populate HTML template
 function buildHtmlReport(showrooms, dealers, dateStr) {
+  // Read template file
+  let template = fs.readFileSync(path.join(__dirname, 'templates', 'dashboard-template.html'), 'utf8');
+  
+  // Calculate showroom metrics
   let totalShowrooms = showrooms.length;
   let totalPct = 0;
   let completedShowrooms = 0;
@@ -200,6 +181,7 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
   const avgCompletion = totalShowrooms > 0 ? Math.round(totalPct / totalShowrooms) : 0;
   const globalAvgDelay = activeDelayCount > 0 ? Math.round(totalAvgDelay / activeDelayCount) : 0;
   
+  // Calculate dealer metrics
   let totalDealers = dealers.length;
   let activeDealers = 0;
   let completedDealers = 0;
@@ -216,6 +198,7 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
     if (timeline.isDelayed) delayedDealers++;
   }
   
+  // Build delayed message
   let delayedMessage = '';
   if (globalAvgDelay > 0 || delayedDealers > 0) {
     delayedMessage = `⚠️ ${globalAvgDelay > 0 ? globalAvgDelay + ' showroom(s)' : ''}${globalAvgDelay > 0 && delayedDealers > 0 ? ' and ' : ''}${delayedDealers > 0 ? delayedDealers + ' dealer(s)' : ''} are currently delayed. Please review the dashboard for details.`;
@@ -223,34 +206,19 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
     delayedMessage = '✅ No delayed projects at this time. All showrooms and dealers are on track! 🎉';
   }
   
-  console.log(`📊 Showrooms: ${totalShowrooms} total, ${completedShowrooms} completed, Avg Delay: ${globalAvgDelay}`);
-  console.log(`📊 Dealers: ${totalDealers} total, ${completedDealers} completed, ${delayedDealers} delayed`);
+  // Replace placeholders
+  template = template.replace(/{{date}}/g, dateStr);
+  template = template.replace(/{{total_showrooms}}/g, totalShowrooms);
+  template = template.replace(/{{completed_showrooms}}/g, completedShowrooms);
+  template = template.replace(/{{avg_completion}}/g, avgCompletion);
+  template = template.replace(/{{delayed_showrooms}}/g, globalAvgDelay);
+  template = template.replace(/{{total_dealers}}/g, totalDealers);
+  template = template.replace(/{{active_dealers}}/g, activeDealers);
+  template = template.replace(/{{onboarded_dealers}}/g, completedDealers);
+  template = template.replace(/{{delayed_dealers}}/g, delayedDealers);
+  template = template.replace(/{{delayed_message}}/g, delayedMessage);
   
-  return `
-    <div style="font-family: 'Segoe UI', Arial, sans-serif;">
-      <h2 style="color: #C6A43B;">📊 AIS Dashboard Summary</h2>
-      <p><strong>Report Time:</strong> ${dateStr}</p>
-      <hr>
-      <h3>🏢 Showroom Performance</h3>
-      <div style="display: flex; justify-content: space-around; flex-wrap: wrap;">
-        <div><strong>Total:</strong> ${totalShowrooms}</div>
-        <div><strong>Completed:</strong> ${completedShowrooms}</div>
-        <div><strong>Avg Completion:</strong> ${avgCompletion}%</div>
-        <div><strong>Avg Delay:</strong> ${globalAvgDelay} days</div>
-      </div>
-      <h3>👥 Dealer Onboarding</h3>
-      <div style="display: flex; justify-content: space-around; flex-wrap: wrap;">
-        <div><strong>Total:</strong> ${totalDealers}</div>
-        <div><strong>Active:</strong> ${activeDealers}</div>
-        <div><strong>Onboarded:</strong> ${completedDealers}</div>
-        <div><strong>Delayed:</strong> ${delayedDealers}</div>
-      </div>
-      <h3>⚠️ Delayed Projects</h3>
-      <p>${delayedMessage}</p>
-      <hr>
-      <p style="font-size: 10px;">AIS Command Center</p>
-    </div>
-  `;
+  return template;
 }
 
 // Send email
@@ -309,12 +277,12 @@ async function main() {
   
   console.log('✅ EmailJS credentials found');
   
-  console.log('📡 Fetching showrooms from Firestore...');
-  const showrooms = await fetchCollection('showrooms');
+  console.log('📡 Fetching showrooms from Firebase...');
+  const showrooms = await fetchShowrooms();
   console.log(`📡 Found ${showrooms.length} showrooms`);
   
-  console.log('📡 Fetching dealers from Firestore...');
-  const dealers = await fetchCollection('dealerOnboarding');
+  console.log('📡 Fetching dealers from Firebase...');
+  const dealers = await fetchDealers();
   console.log(`📡 Found ${dealers.length} dealers`);
   
   const htmlBody = buildHtmlReport(showrooms, dealers, dateStr);
@@ -337,4 +305,7 @@ async function main() {
   console.log('🎉 All emails sent successfully!');
 }
 
-main().catch(err => { console.error('❌ Script error:', err); process.exit(1); });
+main().catch(err => { 
+  console.error('❌ Script error:', err); 
+  process.exit(1); 
+});
