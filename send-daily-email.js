@@ -219,7 +219,7 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
   
   let delayedMessage = '';
   if (globalAvgDelay > 0 || delayedDealers > 0) {
-    delayedMessage = `⚠️ ${globalAvgDelay > 0 ? globalAvgDelay + ' showroom(s)' : ''}${globalAvgDelay > 0 && delayedDealers > 0 ? ' and ' : ''}${delayedDealers > 0 ? delayedDealers + ' dealer(s)' : ''} are currently delayed. Please review the dashboard for details.`;
+    delayedMessage = `⚠️ ${globalAvgDelay > 0 ? globalAvgDelay + ' showroomday(s)' : ''}${globalAvgDelay > 0 && delayedDealers > 0 ? ' and ' : ''}${delayedDealers > 0 ? delayedDealers + ' dealer(s)' : ''} are currently delayed. Please review the dashboard for details.`;
   } else {
     delayedMessage = '✅ No delayed projects at this time. All showrooms and dealers are on track! 🎉';
   }
