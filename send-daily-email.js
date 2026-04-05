@@ -180,6 +180,7 @@ function isHoliday() {
 }
 
 // Build HTML email
+// Build HTML email - BEAUTIFUL VERSION
 function buildHtmlReport(showrooms, dealers, dateStr) {
   let totalShowrooms = showrooms.length;
   let totalPct = 0;
@@ -227,29 +228,177 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
   console.log(`📊 Dealers: ${totalDealers} total, ${completedDealers} completed, ${delayedDealers} delayed`);
   
   return `
-    <div style="font-family: 'Segoe UI', Arial, sans-serif;">
-      <h2 style="color: #C6A43B;">📊 AIS Dashboard Summary</h2>
-      <p><strong>Report Time:</strong> ${dateStr}</p>
-      <hr>
-      <h3>🏢 Showroom Performance</h3>
-      <div style="display: flex; justify-content: space-around; flex-wrap: wrap;">
-        <div><strong>Total:</strong> ${totalShowrooms}</div>
-        <div><strong>Completed:</strong> ${completedShowrooms}</div>
-        <div><strong>Avg Completion:</strong> ${avgCompletion}%</div>
-        <div><strong>Avg Delay:</strong> ${globalAvgDelay} days</div>
-      </div>
-      <h3>👥 Dealer Onboarding</h3>
-      <div style="display: flex; justify-content: space-around; flex-wrap: wrap;">
-        <div><strong>Total:</strong> ${totalDealers}</div>
-        <div><strong>Active:</strong> ${activeDealers}</div>
-        <div><strong>Onboarded:</strong> ${completedDealers}</div>
-        <div><strong>Delayed:</strong> ${delayedDealers}</div>
-      </div>
-      <h3>⚠️ Delayed Projects</h3>
-      <p>${delayedMessage}</p>
-      <hr>
-      <p style="font-size: 10px;">AIS Command Center</p>
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIS Dashboard Report</title>
+<style>
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f0f2f5;
+  }
+  .container {
+    max-width: 700px;
+    margin: 20px auto;
+    background: #ffffff;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  }
+  .header {
+    background: linear-gradient(135deg, #0054A6 0%, #003d7a 100%);
+    padding: 30px;
+    text-align: center;
+  }
+  .header h1 {
+    color: #ffffff;
+    margin: 0;
+    font-size: 24px;
+  }
+  .header p {
+    color: rgba(255,255,255,0.9);
+    margin: 8px 0 0;
+    font-size: 13px;
+  }
+  .content {
+    padding: 30px;
+  }
+  .date-badge {
+    background: #e8f0fe;
+    padding: 12px;
+    text-align: center;
+    border-radius: 8px;
+    margin-bottom: 25px;
+  }
+  .section {
+    margin-bottom: 30px;
+  }
+  .section-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #0054A6;
+    margin-bottom: 15px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #e0e0e0;
+  }
+  .stats-grid {
+    display: flex;
+    justify-content: space-around;
+    flex-wrap: wrap;
+    gap: 15px;
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 12px;
+  }
+  .stat-card {
+    text-align: center;
+    flex: 1;
+    min-width: 100px;
+  }
+  .stat-number {
+    font-size: 32px;
+    font-weight: 800;
+    color: #C6A43B;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .delayed-box {
+    background: #fce8e6;
+    padding: 15px;
+    border-radius: 8px;
+    border-left: 4px solid #e74c3c;
+  }
+  .footer {
+    background: #f8f9fa;
+    padding: 20px;
+    text-align: center;
+    font-size: 11px;
+    color: #888;
+    border-top: 1px solid #e0e0e0;
+  }
+  @media (max-width: 500px) {
+    .stats-grid { flex-direction: column; }
+    .content { padding: 20px; }
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>📊 AIS Command Center</h1>
+      <p>Daily Intelligence Report</p>
     </div>
+    <div class="content">
+      <div class="date-badge">
+        📅 <strong>${dateStr}</strong>
+      </div>
+
+      <div class="section">
+        <div class="section-title">🏢 Showroom Performance</div>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-number">${totalShowrooms}</div>
+            <div class="stat-label">Total Showrooms</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number">${completedShowrooms}</div>
+            <div class="stat-label">Completed</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number">${avgCompletion}%</div>
+            <div class="stat-label">Avg Completion</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number">${globalAvgDelay}</div>
+            <div class="stat-label">Avg Delay (Days)</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">👥 Dealer Onboarding</div>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-number">${totalDealers}</div>
+            <div class="stat-label">Total Dealers</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number">${activeDealers}</div>
+            <div class="stat-label">Active</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number">${completedDealers}</div>
+            <div class="stat-label">Onboarded</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number">${delayedDealers}</div>
+            <div class="stat-label">Delayed</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">⚠️ Delayed Projects</div>
+        <div class="delayed-box">
+          ${delayedMessage}
+        </div>
+      </div>
+    </div>
+    <div class="footer">
+      <p>This is an automated report from AIS Command Center</p>
+      <p>© 2026 AIS Windows | All Rights Reserved</p>
+    </div>
+  </div>
+</body>
+</html>
   `;
 }
 
