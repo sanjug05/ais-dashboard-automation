@@ -1,14 +1,10 @@
-// birthday-alerts.js - CORRECTED VERSION
-const { google } = require('googleapis');
-
-// EmailJS credentials
-const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
-const EMAILJS_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
-const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
-const EMAILJS_PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY;
+// send-daily-email.js
+const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
+const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
+const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
+const PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY;
 const MANUAL_RECIPIENT = process.env.MANUAL_RECIPIENT;
 
-// Default recipients
 const DEFAULT_RECIPIENTS = [
   'sanju.gupta@aisglass.com',
   'mayank.tomar@aisglass.com',
@@ -16,80 +12,155 @@ const DEFAULT_RECIPIENTS = [
   'nidhi.tiwari@aisglass.com'
 ];
 
-// Configuration
-const CONFIG = {
-  SHEET_NAME: 'Dealer Data',
-  EXPIRY_THRESHOLD_DAYS: 30,
-  FOLLOW_UP_THRESHOLD_DAYS: 3
+// Firestore REST API endpoint (not Realtime Database)
+const FIRESTORE_URL = 'https://firestore.googleapis.com/v1/projects/ais-showroom-dashboard/databases/(default)/documents';
+
+// Helper to fetch Firestore collection
+async function fetchCollection(collectionName) {
+  try {
+    const response = await fetch(`${FIRESTORE_URL}/${collectionName}`);
+    const data = await response.json();
+    
+    if (!data.documents) return [];
+    
+    // Parse Firestore document format
+    return data.documents.map(doc => {
+      const fields = doc.fields;
+      const result = { id: doc.name.split('/').pop() };
+      
+      // Convert Firestore fields to JavaScript values
+      for (const [key, value] of Object.entries(fields)) {
+        if (value.stringValue !== undefined) result[key] = value.stringValue;
+        else if (value.integerValue !== undefined) result[key] = parseInt(value.integerValue);
+        else if (value.doubleValue !== undefined) result[key] = parseFloat(value.doubleValue);
+        else if (value.booleanValue !== undefined) result[key] = value.booleanValue;
+        else if (value.mapValue !== undefined) {
+          // Handle nested objects (like data, documents, stageLog, flags)
+          const nestedObj = {};
+          if (value.mapValue.fields) {
+            for (const [nestedKey, nestedValue] of Object.entries(value.mapValue.fields)) {
+              if (nestedValue.stringValue !== undefined) nestedObj[nestedKey] = nestedValue.stringValue;
+              else if (nestedValue.booleanValue !== undefined) nestedObj[nestedKey] = nestedValue.booleanValue;
+              else if (nestedValue.mapValue !== undefined) {
+                // Deep nested (for phase data)
+                const deepObj = {};
+                if (nestedValue.mapValue.fields) {
+                  for (const [deepKey, deepValue] of Object.entries(nestedValue.mapValue.fields)) {
+                    if (deepValue.stringValue !== undefined) deepObj[deepKey] = deepValue.stringValue;
+                  }
+                }
+                nestedObj[nestedKey] = deepObj;
+              }
+            }
+          }
+          result[key] = nestedObj;
+        }
+        else if (value.arrayValue !== undefined) result[key] = value.arrayValue.values || [];
+        else if (value.nullValue !== undefined) result[key] = null;
+      }
+      return result;
+    });
+  } catch (error) {
+    console.error(`Error fetching ${collectionName}:`, error.message);
+    return [];
+  }
+}
+
+// EXACT Phase Configuration from your dashboard
+const PHASES_CONFIG = [
+  { id: 'dim',      name: "Dimensions Submission",         days: 5  },
+  { id: 'cad',      name: "CAD Preparation",                days: 12 },
+  { id: 'plan',     name: "Planning & Order Loading",       days: 15 },
+  { id: 'civil',    name: "Structure & Civil Work",         days: 30 },
+  { id: 'interior', name: "Interior Development",           days: 50 },
+  { id: 'brand',    name: "Branding & Display Setup",       days: 65 },
+  { id: 'window',   name: "Window Installation",            days: 85 },
+  { id: 'launch',   name: "Final Handover / Launch",        days: 90 }
+];
+
+// Dealer stages
+const STAGE_TARGETS = {
+  'Interested': 0,
+  'Shortlisted': 3,
+  'CFT Selected': 8,
+  'Documentation': 15,
+  'Onboarded': 22
 };
 
-// Parse Google Service Account JSON
-let GOOGLE_AUTH = null;
-try {
-  const serviceAccountJson = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-  GOOGLE_AUTH = new google.auth.JWT(
-    serviceAccountJson.client_email,
-    null,
-    serviceAccountJson.private_key,
-    ['https://www.googleapis.com/auth/spreadsheets.readonly']
-  );
-  console.log('✅ Google Auth initialized');
-} catch (error) {
-  console.error('❌ Failed to parse Google service account JSON:', error.message);
+// EXACT calculateShowroomStats from your dashboard
+function calculateShowroomStats(s) {
+  if (!s || !s.startDate) return { pct: 0, avgDelay: 0 };
+  const start = new Date(s.startDate + "T00:00:00");
+  const today = new Date(); 
+  today.setHours(0,0,0,0);
+  let totalDelay = 0, comp = 0, delayCount = 0;
+
+  if (isNaN(start.getTime())) return { pct: 0, avgDelay: 0 };
+
+  PHASES_CONFIG.forEach(p => {
+    const target = new Date(start);
+    target.setDate(start.getDate() + p.days);
+
+    const data = (s.data && s.data[p.id]) || {};
+    if (data.actualDate) {
+      comp++;
+      const actual = new Date(data.actualDate + "T00:00:00");
+      const d = Math.ceil((actual - target) / 86400000);
+      if (d > 0) {
+        totalDelay += d;
+        delayCount++;
+      }
+    } else {
+      const d = Math.ceil((today - target) / 86400000);
+      if (d > 0) {
+        totalDelay += d;
+        delayCount++;
+      }
+    }
+  });
+  
+  const avgDelay = delayCount > 0 ? Math.round(totalDelay / delayCount) : 0;
+  const pct = Math.round((comp / PHASES_CONFIG.length) * 100);
+  
+  return { pct, avgDelay };
 }
 
-// Format date
-function formatDate(date) {
-  if (!date) return '—';
-  const d = new Date(date);
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const year = d.getFullYear();
-  return `${day}-${month}-${year}`;
+// Check if dealer is dropped
+function isDropped(dealer) {
+  const f = dealer.flags || {};
+  return dealer.status === 'Dropped' || f.cftRejected === true || f.prospectBackout === true;
 }
 
-// Get current date in IST
-function getCurrentDateIST() {
+// Calculate dealer delay
+function calculateDealerTimeline(d) {
+  if (!d.startDate) return { isDelayed: false, delayDays: 0 };
+  
+  const start = new Date(d.startDate);
+  const today = new Date();
+  const daysElapsed = Math.floor((today - start) / (1000 * 60 * 60 * 24));
+  
+  const currentStage = d.currentStage || 'Interested';
+  const targetDays = STAGE_TARGETS[currentStage] || 0;
+  const delayDays = Math.max(0, daysElapsed - targetDays);
+  const isDelayed = delayDays > 3;
+  
+  return { isDelayed, delayDays };
+}
+
+// Get formatted date in IST
+function getFormattedDate() {
   const now = new Date();
   const istOffset = 5.5 * 60 * 60 * 1000;
   const istTime = new Date(now.getTime() + istOffset);
-  return formatDate(istTime);
-}
-
-// EXACT parseSpecificDate from your Apps Script
-function parseSpecificDate(val) {
-  if (!val) return null;
-  if (val instanceof Date && !isNaN(val.getTime())) return val;
   
-  if (typeof val === 'string' && val.includes('/')) {
-    const parts = val.split('/');
-    if (parts.length === 3) {
-      return new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-    }
-  }
+  const year = istTime.getUTCFullYear();
+  const month = String(istTime.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(istTime.getUTCDate()).padStart(2, '0');
+  const hours = String(istTime.getUTCHours()).padStart(2, '0');
+  const minutes = String(istTime.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(istTime.getUTCSeconds()).padStart(2, '0');
   
-  if (typeof val === 'number') {
-    return new Date((val - 25569) * 86400 * 1000);
-  }
-  
-  return null;
-}
-
-// EXACT isSameDayMonth from your Apps Script
-function isSameDayMonth(d1, d2) {
-  if (!d1 || !d2) return false;
-  return d1.getDate() === d2.getDate() && d1.getMonth() === d2.getMonth();
-}
-
-// EXACT findColumn from your Apps Script - SEARCHES FOR HEADERS
-function findColumn(headers, keywords) {
-  for (let i = 0; i < headers.length; i++) {
-    const headText = headers[i]?.toString().toLowerCase().trim() || '';
-    if (keywords.some(k => headText === k.toLowerCase() || headText.includes(k.toLowerCase()))) {
-      return i;
-    }
-  }
-  return -1;
+  return `${day}-${month}-${year} ${hours}:${minutes}:${seconds} IST`;
 }
 
 // Check holiday
@@ -108,166 +179,85 @@ function isHoliday() {
   return false;
 }
 
-// Get data from Google Sheet
-async function getSheetData() {
-  try {
-    const sheets = google.sheets({ version: 'v4', auth: GOOGLE_AUTH });
-    
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: `${CONFIG.SHEET_NAME}!A:ZZ`,
-    });
-
-    const rows = response.data.values;
-    if (!rows || rows.length < 2) {
-      console.log('No data found in sheet');
-      return { expiry: [], birthday: [], anniversary: [], showroomAnniversary: [], followUp: [] };
+// Build HTML email
+function buildHtmlReport(showrooms, dealers, dateStr) {
+  let totalShowrooms = showrooms.length;
+  let totalPct = 0;
+  let completedShowrooms = 0;
+  let activeDelayCount = 0;
+  let totalAvgDelay = 0;
+  
+  for (const showroom of showrooms) {
+    const stats = calculateShowroomStats(showroom);
+    totalPct += stats.pct;
+    if (stats.pct === 100) completedShowrooms++;
+    if (stats.avgDelay > 0) {
+      totalAvgDelay += stats.avgDelay;
+      activeDelayCount++;
     }
-    
-    const headers = rows[0];
-    const dataRows = rows.slice(1);
-    
-    // Log headers found for debugging
-    console.log('📋 Found headers (first 20):', headers.slice(0, 20));
-    
-    // Find column indices by searching for headers - JUST LIKE YOUR APPS SCRIPT
-    const col = {
-      dealerName: findColumn(headers, ["Channel Partner"]),
-      city: findColumn(headers, ["City"]),
-      rm: findColumn(headers, ["RM"]),
-      expiry: findColumn(headers, ["Last Agreement Date", "Expiry"]),
-      dob: findColumn(headers, ["Date of Birth"]),
-      showroomAnniversary: findColumn(headers, ["Showroom Anniversary", "Showroom Date"]), // NOW SEARCHES!
-      anniversary: findColumn(headers, ["Marriage anniversary"]),
-      followUp: findColumn(headers, ["Follow-up Date", "Next Follow Up"]),
-      status: findColumn(headers, ["Status"])
-    };
-    
-    console.log('📋 Column mapping:', col);
-    
-    // Check if critical columns are missing
-    if (col.dealerName === -1) console.warn('⚠️ "Channel Partner" column not found!');
-    if (col.dob === -1) console.warn('⚠️ "Date of Birth" column not found!');
-    if (col.expiry === -1) console.warn('⚠️ "Last Agreement Date" column not found!');
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const alerts = { 
-      expiry: [], 
-      birthday: [], 
-      anniversary: [], 
-      showroomAnniversary: [], 
-      followUp: [] 
-    };
-    
-    for (const row of dataRows) {
-      const dealerInfo = {
-        name: row[col.dealerName] || "Unknown Dealer",
-        city: row[col.city] || "N/A",
-        rm: row[col.rm] || "N/A",
-        expiry: parseSpecificDate(row[col.expiry]),
-        dob: parseSpecificDate(row[col.dob]),
-        showroomAnniversary: parseSpecificDate(row[col.showroomAnniversary]),
-        anniversary: parseSpecificDate(row[col.anniversary]),
-        followUp: parseSpecificDate(row[col.followUp]),
-        status: row[col.status] || "N/A"
-      };
-      
-      // Birthday Check
-      if (dealerInfo.dob && isSameDayMonth(dealerInfo.dob, today)) {
-        alerts.birthday.push(dealerInfo);
-      }
-      
-      // Anniversary Check
-      if (dealerInfo.anniversary && isSameDayMonth(dealerInfo.anniversary, today)) {
-        alerts.anniversary.push(dealerInfo);
-      }
-      
-      // Expiry Check
-      if (dealerInfo.expiry) {
-        const diffDays = Math.ceil((dealerInfo.expiry - today) / (1000 * 60 * 60 * 24));
-        if (diffDays >= 0 && diffDays <= CONFIG.EXPIRY_THRESHOLD_DAYS) {
-          alerts.expiry.push(dealerInfo);
-        }
-      }
-      
-      // Follow-up Check
-      if (dealerInfo.followUp) {
-        const diffDays = Math.ceil((dealerInfo.followUp - today) / (1000 * 60 * 60 * 24));
-        if (diffDays >= 0 && diffDays <= CONFIG.FOLLOW_UP_THRESHOLD_DAYS) {
-          alerts.followUp.push(dealerInfo);
-        }
-      }
-      
-      // Showroom Anniversary Check
-      if (dealerInfo.showroomAnniversary && isSameDayMonth(dealerInfo.showroomAnniversary, today)) {
-        alerts.showroomAnniversary.push(dealerInfo);
-      }
-    }
-    
-    return alerts;
-  } catch (error) {
-    console.error('Error fetching sheet data:', error.message);
-    throw error;
   }
-}
-
-// Build HTML report
-function buildHtmlReport(alerts, dateStr) {
-  let html = `<div style="font-family: sans-serif; color: #333;">
-    <h2 style="color: #1a73e8;">AIS Dealer Daily Summary</h2>
-    <p>Date: ${dateStr}</p>
-    <hr>`;
-
-  const categories = [
-    { label: "🎂 Birthdays Today", data: alerts.birthday, color: "#e8f0fe", getDate: (item) => item.dob },
-    { label: "🏬 Showroom Anniversaries", data: alerts.showroomAnniversary, color: "#f3e8ff", getDate: (item) => item.showroomAnniversary },
-    { label: "💍 Anniversaries Today", data: alerts.anniversary, color: "#e6fffa", getDate: (item) => item.anniversary },
-    { label: "⚠️ Agreement Expiries (30 Days)", data: alerts.expiry, color: "#fce8e6", getDate: (item) => item.expiry },
-    { label: "📞 Upcoming Follow-ups", data: alerts.followUp, color: "#fff7e6", getDate: (item) => item.followUp }
-  ];
-
-  categories.forEach(cat => {
-    html += `<h3>${cat.label}</h3>`;
-    if (cat.data.length === 0) {
-      html += `<p style="color: #999;">No records found.</p>`;
-    } else {
-      html += `<table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-        <thead>
-          <tr>
-            <th style="background-color: #1a73e8; color: white; padding: 10px;">Dealer Name</th>
-            <th style="background-color: #1a73e8; color: white; padding: 10px;">City</th>
-            <th style="background-color: #1a73e8; color: white; padding: 10px;">RM</th>
-            <th style="background-color: #1a73e8; color: white; padding: 10px;">Date</th>
-          </tr>
-        </thead>
-        <tbody>`;
-      
-      for (const item of cat.data) {
-        const dateVal = cat.getDate(item);
-        const dateStrDisplay = dateVal ? formatDate(dateVal) : "—";
-        
-        html += `<tr style="background-color: ${cat.color};">
-          <td style="border: 1px solid #ddd; padding: 8px;">${item.name}</td>
-          <td style="border: 1px solid #ddd; padding: 8px;">${item.city}</td>
-          <td style="border: 1px solid #ddd; padding: 8px;">${item.rm}</td>
-          <td style="border: 1px solid #ddd; padding: 8px;">${dateStrDisplay}</td>
-        </tr>`;
-      }
-      html += `</tbody></table>`;
+  
+  const avgCompletion = totalShowrooms > 0 ? Math.round(totalPct / totalShowrooms) : 0;
+  const globalAvgDelay = activeDelayCount > 0 ? Math.round(totalAvgDelay / activeDelayCount) : 0;
+  
+  let totalDealers = dealers.length;
+  let activeDealers = 0;
+  let completedDealers = 0;
+  let delayedDealers = 0;
+  
+  for (const dealer of dealers) {
+    if (dealer.status === 'Completed') {
+      completedDealers++;
+    } else if (!isDropped(dealer) && dealer.status === 'Active') {
+      activeDealers++;
     }
-  });
-
-  html += `<br><p style="font-size: 10px; color: #666;">This is an automated system alert. Please do not reply.</p></div>`;
-  return html;
+    
+    const timeline = calculateDealerTimeline(dealer);
+    if (timeline.isDelayed) delayedDealers++;
+  }
+  
+  let delayedMessage = '';
+  if (globalAvgDelay > 0 || delayedDealers > 0) {
+    delayedMessage = `⚠️ ${globalAvgDelay > 0 ? globalAvgDelay + ' showroom(s)' : ''}${globalAvgDelay > 0 && delayedDealers > 0 ? ' and ' : ''}${delayedDealers > 0 ? delayedDealers + ' dealer(s)' : ''} are currently delayed. Please review the dashboard for details.`;
+  } else {
+    delayedMessage = '✅ No delayed projects at this time. All showrooms and dealers are on track! 🎉';
+  }
+  
+  console.log(`📊 Showrooms: ${totalShowrooms} total, ${completedShowrooms} completed, Avg Delay: ${globalAvgDelay}`);
+  console.log(`📊 Dealers: ${totalDealers} total, ${completedDealers} completed, ${delayedDealers} delayed`);
+  
+  return `
+    <div style="font-family: 'Segoe UI', Arial, sans-serif;">
+      <h2 style="color: #C6A43B;">📊 AIS Dashboard Summary</h2>
+      <p><strong>Report Time:</strong> ${dateStr}</p>
+      <hr>
+      <h3>🏢 Showroom Performance</h3>
+      <div style="display: flex; justify-content: space-around; flex-wrap: wrap;">
+        <div><strong>Total:</strong> ${totalShowrooms}</div>
+        <div><strong>Completed:</strong> ${completedShowrooms}</div>
+        <div><strong>Avg Completion:</strong> ${avgCompletion}%</div>
+        <div><strong>Avg Delay:</strong> ${globalAvgDelay} days</div>
+      </div>
+      <h3>👥 Dealer Onboarding</h3>
+      <div style="display: flex; justify-content: space-around; flex-wrap: wrap;">
+        <div><strong>Total:</strong> ${totalDealers}</div>
+        <div><strong>Active:</strong> ${activeDealers}</div>
+        <div><strong>Onboarded:</strong> ${completedDealers}</div>
+        <div><strong>Delayed:</strong> ${delayedDealers}</div>
+      </div>
+      <h3>⚠️ Delayed Projects</h3>
+      <p>${delayedMessage}</p>
+      <hr>
+      <p style="font-size: 10px;">AIS Command Center</p>
+    </div>
+  `;
 }
 
 // Send email
 async function sendEmail(recipient, htmlBody, dateStr) {
   const templateParams = {
     to_email: recipient,
-    subject: `🚨 AIS Dealer Alerts - ${dateStr}`,
+    subject: `📊 AIS Dashboard Report - ${dateStr}`,
     date: dateStr,
     message: htmlBody
   };
@@ -279,10 +269,10 @@ async function sendEmail(recipient, htmlBody, dateStr) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        service_id: EMAILJS_SERVICE_ID,
-        template_id: EMAILJS_TEMPLATE_ID,
-        user_id: EMAILJS_PUBLIC_KEY,
-        accessToken: EMAILJS_PRIVATE_KEY,
+        service_id: SERVICE_ID,
+        template_id: TEMPLATE_ID,
+        user_id: PUBLIC_KEY,
+        accessToken: PRIVATE_KEY,
         template_params: templateParams
       })
     });
@@ -303,44 +293,37 @@ async function sendEmail(recipient, htmlBody, dateStr) {
 
 // Main function
 async function main() {
-  console.log('🚀 Starting birthday & anniversary alerts...');
-  const dateStr = getCurrentDateIST();
+  console.log('🚀 Starting dashboard email report...');
+  const dateStr = getFormattedDate();
   console.log(`Time: ${dateStr}`);
   
   if (!MANUAL_RECIPIENT && isHoliday()) {
-    console.log('📅 Today is a holiday. Skipping automated alerts.');
+    console.log('📅 Today is a holiday. Skipping automated email report.');
     process.exit(0);
   }
   
-  if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY || !EMAILJS_PRIVATE_KEY) {
+  if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) {
     console.error('❌ Missing EmailJS credentials!');
     process.exit(1);
   }
   
-  if (!process.env.GOOGLE_SHEET_ID || !process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-    console.error('❌ Missing Google Sheets credentials!');
-    process.exit(1);
-  }
+  console.log('✅ EmailJS credentials found');
   
-  if (!GOOGLE_AUTH) {
-    console.error('❌ Failed to initialize Google Auth!');
-    process.exit(1);
-  }
+  console.log('📡 Fetching showrooms from Firestore...');
+  const showrooms = await fetchCollection('showrooms');
+  console.log(`📡 Found ${showrooms.length} showrooms`);
   
-  console.log('✅ All credentials found');
+  console.log('📡 Fetching dealers from Firestore...');
+  const dealers = await fetchCollection('dealerOnboarding');
+  console.log(`📡 Found ${dealers.length} dealers`);
   
-  console.log('\n📊 Fetching data from Google Sheet...');
-  const alerts = await getSheetData();
-  
-  console.log(`\n📊 Found: ${alerts.birthday.length} birthdays, ${alerts.anniversary.length} anniversaries, ${alerts.showroomAnniversary.length} showroom anniversaries, ${alerts.expiry.length} expiries, ${alerts.followUp.length} follow-ups`);
-  
-  const htmlBody = buildHtmlReport(alerts, dateStr);
+  const htmlBody = buildHtmlReport(showrooms, dealers, dateStr);
   
   let recipients = MANUAL_RECIPIENT && MANUAL_RECIPIENT.trim() 
     ? [MANUAL_RECIPIENT] 
     : DEFAULT_RECIPIENTS;
   
-  console.log(`\n📧 Sending to ${recipients.length} recipients`);
+  console.log(`📧 Sending to ${recipients.length} recipients`);
   
   let successCount = 0;
   for (const recipient of recipients) {
@@ -351,10 +334,7 @@ async function main() {
   
   console.log(`\n📬 Done: ${successCount}/${recipients.length} successful`);
   if (successCount === 0) process.exit(1);
-  console.log('🎉 All alerts sent successfully!');
+  console.log('🎉 All emails sent successfully!');
 }
 
-main().catch(err => { 
-  console.error('❌ Script error:', err); 
-  process.exit(1); 
-});
+main().catch(err => { console.error('❌ Script error:', err); process.exit(1); });
