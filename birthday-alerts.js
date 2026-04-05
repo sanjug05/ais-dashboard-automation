@@ -1,4 +1,6 @@
-// birthday-alerts.js - CORRECTED VERSION
+// birthday-alerts.js
+const fs = require('fs');
+const path = require('path');
 const { google } = require('googleapis');
 
 // EmailJS credentials
@@ -13,6 +15,7 @@ const DEFAULT_RECIPIENTS = [
   'sanju.gupta@aisglass.com',
   'mayank.tomar@aisglass.com',
   'krishna.verma@aisglass.com',
+  'nidhi.tiwari@aisglass.com'
 ];
 
 // Configuration
@@ -37,7 +40,7 @@ try {
   console.error('❌ Failed to parse Google service account JSON:', error.message);
 }
 
-// Format date
+// Helper functions
 function formatDate(date) {
   if (!date) return '—';
   const d = new Date(date);
@@ -47,7 +50,6 @@ function formatDate(date) {
   return `${day}-${month}-${year}`;
 }
 
-// Get current date in IST
 function getCurrentDateIST() {
   const now = new Date();
   const istOffset = 5.5 * 60 * 60 * 1000;
@@ -55,7 +57,6 @@ function getCurrentDateIST() {
   return formatDate(istTime);
 }
 
-// EXACT parseSpecificDate from your Apps Script
 function parseSpecificDate(val) {
   if (!val) return null;
   if (val instanceof Date && !isNaN(val.getTime())) return val;
@@ -74,13 +75,11 @@ function parseSpecificDate(val) {
   return null;
 }
 
-// EXACT isSameDayMonth from your Apps Script
 function isSameDayMonth(d1, d2) {
   if (!d1 || !d2) return false;
   return d1.getDate() === d2.getDate() && d1.getMonth() === d2.getMonth();
 }
 
-// EXACT findColumn from your Apps Script - SEARCHES FOR HEADERS
 function findColumn(headers, keywords) {
   for (let i = 0; i < headers.length; i++) {
     const headText = headers[i]?.toString().toLowerCase().trim() || '';
@@ -91,7 +90,6 @@ function findColumn(headers, keywords) {
   return -1;
 }
 
-// Check holiday
 function isHoliday() {
   const today = new Date();
   const day = today.getDay();
@@ -120,44 +118,36 @@ async function getSheetData() {
     const rows = response.data.values;
     if (!rows || rows.length < 2) {
       console.log('No data found in sheet');
-      return { expiry: [], birthday: [], anniversary: [], showroomAnniversary: [], followUp: [] };
+      return { birthdays: [], anniversaries: [], showroomAnniversaries: [], expiries: [], followups: [] };
     }
     
     const headers = rows[0];
     const dataRows = rows.slice(1);
     
-    // Log headers found for debugging
     console.log('📋 Found headers (first 20):', headers.slice(0, 20));
     
-    // Find column indices by searching for headers - JUST LIKE YOUR APPS SCRIPT
     const col = {
       dealerName: findColumn(headers, ["Channel Partner"]),
       city: findColumn(headers, ["City"]),
       rm: findColumn(headers, ["RM"]),
       expiry: findColumn(headers, ["Last Agreement Date", "Expiry"]),
       dob: findColumn(headers, ["Date of Birth"]),
-      showroomAnniversary: findColumn(headers, ["Showroom Anniversary", "Showroom Date"]), // NOW SEARCHES!
+      showroomAnniversary: findColumn(headers, ["Showroom Anniversary", "Showroom Date"]),
       anniversary: findColumn(headers, ["Marriage anniversary"]),
       followUp: findColumn(headers, ["Follow-up Date", "Next Follow Up"]),
-      status: findColumn(headers, ["Status"])
     };
     
     console.log('📋 Column mapping:', col);
-    
-    // Check if critical columns are missing
-    if (col.dealerName === -1) console.warn('⚠️ "Channel Partner" column not found!');
-    if (col.dob === -1) console.warn('⚠️ "Date of Birth" column not found!');
-    if (col.expiry === -1) console.warn('⚠️ "Last Agreement Date" column not found!');
     
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
     const alerts = { 
-      expiry: [], 
-      birthday: [], 
-      anniversary: [], 
-      showroomAnniversary: [], 
-      followUp: [] 
+      birthdays: [], 
+      anniversaries: [], 
+      showroomAnniversaries: [], 
+      expiries: [], 
+      followups: [] 
     };
     
     for (const row of dataRows) {
@@ -170,38 +160,32 @@ async function getSheetData() {
         showroomAnniversary: parseSpecificDate(row[col.showroomAnniversary]),
         anniversary: parseSpecificDate(row[col.anniversary]),
         followUp: parseSpecificDate(row[col.followUp]),
-        status: row[col.status] || "N/A"
       };
       
-      // Birthday Check
       if (dealerInfo.dob && isSameDayMonth(dealerInfo.dob, today)) {
-        alerts.birthday.push(dealerInfo);
+        alerts.birthdays.push(dealerInfo);
       }
       
-      // Anniversary Check
       if (dealerInfo.anniversary && isSameDayMonth(dealerInfo.anniversary, today)) {
-        alerts.anniversary.push(dealerInfo);
+        alerts.anniversaries.push(dealerInfo);
       }
       
-      // Expiry Check
+      if (dealerInfo.showroomAnniversary && isSameDayMonth(dealerInfo.showroomAnniversary, today)) {
+        alerts.showroomAnniversaries.push(dealerInfo);
+      }
+      
       if (dealerInfo.expiry) {
         const diffDays = Math.ceil((dealerInfo.expiry - today) / (1000 * 60 * 60 * 24));
         if (diffDays >= 0 && diffDays <= CONFIG.EXPIRY_THRESHOLD_DAYS) {
-          alerts.expiry.push(dealerInfo);
+          alerts.expiries.push(dealerInfo);
         }
       }
       
-      // Follow-up Check
       if (dealerInfo.followUp) {
         const diffDays = Math.ceil((dealerInfo.followUp - today) / (1000 * 60 * 60 * 24));
         if (diffDays >= 0 && diffDays <= CONFIG.FOLLOW_UP_THRESHOLD_DAYS) {
-          alerts.followUp.push(dealerInfo);
+          alerts.followups.push(dealerInfo);
         }
-      }
-      
-      // Showroom Anniversary Check
-      if (dealerInfo.showroomAnniversary && isSameDayMonth(dealerInfo.showroomAnniversary, today)) {
-        alerts.showroomAnniversary.push(dealerInfo);
       }
     }
     
@@ -212,61 +196,71 @@ async function getSheetData() {
   }
 }
 
-// Build HTML report
+// Load and populate HTML template
 function buildHtmlReport(alerts, dateStr) {
-  let html = `<div style="font-family: sans-serif; color: #333;">
-    <h2 style="color: #1a73e8;">AIS Dealer Daily Summary</h2>
-    <p>Date: ${dateStr}</p>
-    <hr>`;
-
-  const categories = [
-    { label: "🎂 Birthdays Today", data: alerts.birthday, color: "#e8f0fe", getDate: (item) => item.dob },
-    { label: "🏬 Showroom Anniversaries", data: alerts.showroomAnniversary, color: "#f3e8ff", getDate: (item) => item.showroomAnniversary },
-    { label: "💍 Anniversaries Today", data: alerts.anniversary, color: "#e6fffa", getDate: (item) => item.anniversary },
-    { label: "⚠️ Agreement Expiries (30 Days)", data: alerts.expiry, color: "#fce8e6", getDate: (item) => item.expiry },
-    { label: "📞 Upcoming Follow-ups", data: alerts.followUp, color: "#fff7e6", getDate: (item) => item.followUp }
-  ];
-
-  categories.forEach(cat => {
-    html += `<h3>${cat.label}</h3>`;
-    if (cat.data.length === 0) {
-      html += `<p style="color: #999;">No records found.</p>`;
-    } else {
-      html += `<table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-        <thead>
-          <tr>
-            <th style="background-color: #1a73e8; color: white; padding: 10px;">Dealer Name</th>
-            <th style="background-color: #1a73e8; color: white; padding: 10px;">City</th>
-            <th style="background-color: #1a73e8; color: white; padding: 10px;">RM</th>
-            <th style="background-color: #1a73e8; color: white; padding: 10px;">Date</th>
-          </tr>
-        </thead>
-        <tbody>`;
-      
-      for (const item of cat.data) {
-        const dateVal = cat.getDate(item);
-        const dateStrDisplay = dateVal ? formatDate(dateVal) : "—";
-        
-        html += `<tr style="background-color: ${cat.color};">
-          <td style="border: 1px solid #ddd; padding: 8px;">${item.name}</td>
-          <td style="border: 1px solid #ddd; padding: 8px;">${item.city}</td>
-          <td style="border: 1px solid #ddd; padding: 8px;">${item.rm}</td>
-          <td style="border: 1px solid #ddd; padding: 8px;">${dateStrDisplay}</td>
-        </tr>`;
-      }
-      html += `</tbody></table>`;
+  let template = fs.readFileSync(path.join(__dirname, 'templates', 'birthday-template.html'), 'utf8');
+  
+  // Generate HTML for each category
+  const generateList = (items) => {
+    if (items.length === 0) return '';
+    let html = '<ul class="record-list">';
+    for (const item of items) {
+      html += `<li>
+        <span class="dealer-name">${escapeHtml(item.name)}</span>
+        <span class="dealer-details">${escapeHtml(item.city)} | RM: ${escapeHtml(item.rm)}</span>
+      </li>`;
     }
-  });
+    html += '</ul>';
+    return html;
+  };
+  
+  // Replace placeholders (using Handlebars-like syntax)
+  template = template.replace(/{{date}}/g, dateStr);
+  
+  // Replace conditional blocks
+  const birthdayBlock = alerts.birthdays.length > 0 
+    ? generateList(alerts.birthdays)
+    : '<div class="no-records">✨ No birthdays today.</div>';
+  template = template.replace(/{{#if birthdays\.length}}[\s\S]*?{{\/if}}/, birthdayBlock);
+  
+  const showroomBlock = alerts.showroomAnniversaries.length > 0
+    ? generateList(alerts.showroomAnniversaries)
+    : '<div class="no-records">✨ No showroom anniversaries today.</div>';
+  template = template.replace(/{{#if showroomAnniversaries\.length}}[\s\S]*?{{\/if}}/, showroomBlock);
+  
+  const anniversaryBlock = alerts.anniversaries.length > 0
+    ? generateList(alerts.anniversaries)
+    : '<div class="no-records">✨ No anniversaries today.</div>';
+  template = template.replace(/{{#if anniversaries\.length}}[\s\S]*?{{\/if}}/, anniversaryBlock);
+  
+  const expiryBlock = alerts.expiries.length > 0
+    ? generateList(alerts.expiries)
+    : '<div class="no-records">✅ No expiries in next 30 days.</div>';
+  template = template.replace(/{{#if expiries\.length}}[\s\S]*?{{\/if}}/, expiryBlock);
+  
+  const followupBlock = alerts.followups.length > 0
+    ? generateList(alerts.followups)
+    : '<div class="no-records">✅ No follow-ups due.</div>';
+  template = template.replace(/{{#if followups\.length}}[\s\S]*?{{\/if}}/, followupBlock);
+  
+  return template;
+}
 
-  html += `<br><p style="font-size: 10px; color: #666;">This is an automated system alert. Please do not reply.</p></div>`;
-  return html;
+function escapeHtml(text) {
+  if (!text) return '';
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // Send email
 async function sendEmail(recipient, htmlBody, dateStr) {
   const templateParams = {
     to_email: recipient,
-    subject: `🚨 AIS Dealer Alerts - ${dateStr}`,
+    subject: `🎉 AIS Celebrations & Alerts - ${dateStr}`,
     date: dateStr,
     message: htmlBody
   };
@@ -331,7 +325,7 @@ async function main() {
   console.log('\n📊 Fetching data from Google Sheet...');
   const alerts = await getSheetData();
   
-  console.log(`\n📊 Found: ${alerts.birthday.length} birthdays, ${alerts.anniversary.length} anniversaries, ${alerts.showroomAnniversary.length} showroom anniversaries, ${alerts.expiry.length} expiries, ${alerts.followUp.length} follow-ups`);
+  console.log(`\n📊 Found: ${alerts.birthdays.length} birthdays, ${alerts.anniversaries.length} anniversaries, ${alerts.showroomAnniversaries.length} showroom anniversaries, ${alerts.expiries.length} expiries, ${alerts.followups.length} follow-ups`);
   
   const htmlBody = buildHtmlReport(alerts, dateStr);
   
