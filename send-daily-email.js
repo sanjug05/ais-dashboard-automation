@@ -229,297 +229,228 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
   
   return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="color-scheme" content="light only">
+  <meta name="supported-color-schemes" content="light only">
   <title>AIS Command Center Report</title>
+
+  <!--[if mso]>
+  <xml>
+    <o:OfficeDocumentSettings>
+      <o:AllowPNG/>
+      <o:PixelsPerInch>96</o:PixelsPerInch>
+    </o:OfficeDocumentSettings>
+  </xml>
+  <![endif]-->
+
   <style>
-    :root{
-      --bg:#f4f6f9;
-      --card:#ffffff;
-      --navy:#1a3a5c;
-      --muted:#666666;
-      --success:#28a745;
-      --warning:#ffc107;
-      --danger:#dc3545;
-      --shadow: 0 2px 10px rgba(0,0,0,0.08);
-      --radius:12px;
-    }
-
-    *{ box-sizing:border-box; }
-
-    body{
-      margin:0;
-      background:var(--bg);
-      font-family:'Segoe UI', Arial, sans-serif;
-      color:#111;
-      padding:20px;
-    }
-
-    .container{
-      max-width:900px;              /* wider = desktop friendly */
-      margin:0 auto;
-      background:var(--card);
-      border-radius:var(--radius);
-      overflow:hidden;
-      box-shadow: var(--shadow);
-    }
-
-    .header{
-      background:var(--navy);
-      padding:20px;
-      text-align:center;
-    }
-    .header h1{
-      color:#fff;
-      margin:0;
-      font-size:24px;
-      line-height:1.25;
-    }
-    .header p{
-      color:#a8c8e8;
-      margin:8px 0 0;
-      font-size:14px;
-    }
-
-    .section{
-      padding:16px;
-    }
-
-    /* DESKTOP: 2 column row */
-    .two-col{
-      display:flex;
-      gap:16px;
-      align-items:stretch;
-    }
-    .col{
-      flex:1 1 0;
-      min-width:320px; /* ensures not too narrow; wraps on smaller screens */
-    }
-
-    .card{
-      background:var(--card);
-      border-radius:var(--radius);
-      padding:16px;
-      box-shadow: var(--shadow);
-      height:100%;
-    }
-
-    .card h2{
-      color:var(--navy);
-      margin:0 0 16px;
-      font-size:18px;
-      line-height:1.2;
-    }
-
-    .metric-label{
-      color:var(--muted);
-      font-size:12px;
-      text-transform:uppercase;
-      letter-spacing:1px;
-      line-height:1.2;
-    }
-    .metric-number{
-      font-size:48px;
-      font-weight:800;
-      margin:6px 0 0;
-      line-height:1.1;
-    }
-
-    .metrics-row{
-      display:flex;
-      gap:8px;
-      margin-top:10px;
-    }
-    .metric-box{
-      flex:1 1 0;
-      text-align:center;
-      padding:8px 6px;
-    }
-    .metric-value{
-      font-size:32px;
-      font-weight:800;
-      margin-top:6px;
-      line-height:1.1;
-      white-space:nowrap; /* prevents “82 DAYS” splitting awkwardly */
-    }
-
-    .text-success{ color:var(--success); }
-    .text-warning{ color:var(--warning); }
-    .text-danger{ color:var(--danger); }
-
-    .delayed{
-      background:var(--danger);
-      margin:0 16px 16px;
-      border-radius:var(--radius);
-      padding:22px 18px;
-      text-align:center;
-      box-shadow: 0 4px 15px rgba(220,53,69,0.35);
-      color:#fff;
-    }
-    .delayed-title{
-      font-size:16px;
-      font-weight:800;
-      text-transform:uppercase;
-      letter-spacing:2px;
-      margin-bottom:16px;
-    }
-    .delayed-grid{
-      display:flex;
-      gap:12px;
-      justify-content:space-between;
-      align-items:flex-start;
-    }
-    .delayed-item{
-      flex:1 1 0;
-      padding:6px;
-    }
-    .delayed-item .small{
-      font-size:13px;
-      opacity:0.9;
-      letter-spacing:0.5px;
-    }
-    .delayed-item .big{
-      font-size:64px;
-      font-weight:900;
-      line-height:1.05;
-      margin:6px 0;
-    }
-    .delayed-item .end{
-      font-size:14px;
-      font-weight:800;
-      letter-spacing:0.5px;
-    }
-    .delayed-note{
-      margin-top:18px;
-      padding-top:12px;
-      border-top:1px solid rgba(255,255,255,0.3);
-      font-size:14px;
-    }
-
-    .footer{
-      background:#f8f9fa;
-      text-align:center;
-      padding:16px;
-      font-size:12px;
-      color:#999;
-      border-top:1px solid #e6e6e6;
-    }
-
-    /* MOBILE: stack columns + adjust sizes */
-    @media (max-width: 700px){
-      body{ padding:12px; }
-      .two-col{ flex-direction:column; }
-      .metric-number{ font-size:44px; }
-      .metric-value{ font-size:28px; }
-      .delayed-item .big{ font-size:54px; }
-      .delayed-grid{ flex-direction:column; }
+    /* Mobile stacking (works in most mobile email apps, ignored by Outlook desktop) */
+    @media only screen and (max-width: 600px) {
+      .container { width: 100% !important; }
+      .stack { display:block !important; width:100% !important; }
+      .p-outer { padding: 12px !important; }
+      .p-card { padding: 14px !important; }
+      .num-big { font-size: 54px !important; }
+      .num { font-size: 34px !important; }
+      .num-main { font-size: 44px !important; }
     }
   </style>
 </head>
 
-<body>
-  <div class="container">
+<body style="margin:0; padding:0; background-color:#f4f6f9; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; font-family:Segoe UI, Arial, sans-serif;">
 
-    <!-- Header -->
-    <div class="header">
-      <h1>📊 AIS Command Center</h1>
-      <p>Daily Performance Report</p>
-    </div>
+  <!-- OUTER BG -->
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f4f6f9" style="background-color:#f4f6f9;">
+    <tr>
+      <td align="center" class="p-outer" style="padding:20px;">
 
-    <!-- Two column section (desktop) -->
-    <div class="section">
-      <div class="two-col">
+        <!-- CONTAINER -->
+        <!--[if mso]>
+        <table role="presentation" width="700" cellspacing="0" cellpadding="0" border="0">
+          <tr><td>
+        <![endif]-->
 
-        <!-- Column 1: Showroom Performance -->
-        <div class="col">
-          <div class="card">
-            <h2>🏢 Showroom Performance</h2>
-
-            <div style="text-align:center; margin-bottom:14px;">
-              <div class="metric-label">TOTAL SHOWROOMS</div>
-              <div class="metric-number">24</div>
-            </div>
-
-            <div class="metrics-row">
-              <div class="metric-box">
-                <div class="metric-label" style="font-size:11px;">COMPLETED</div>
-                <div class="metric-value text-success">1</div>
+        <table role="presentation" class="container" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:700px; background-color:#ffffff; border-radius:12px; overflow:hidden;">
+          
+          <!-- HEADER (bgcolor ensures visible on system/Outlook) -->
+          <tr>
+            <td align="center" bgcolor="#1a3a5c" style="background-color:#1a3a5c; padding:20px; border-radius:12px 12px 0 0;">
+              <div style="font-size:24px; line-height:30px; font-weight:700; color:#ffffff;">
+                📊 AIS Command Center
               </div>
-              <div class="metric-box">
-                <div class="metric-label" style="font-size:11px;">AVG COMPLETION</div>
-                <div class="metric-value text-warning">28%</div>
+              <div style="margin-top:6px; font-size:14px; line-height:18px; color:#a8c8e8;">
+                Daily Performance Report
               </div>
-              <div class="metric-box">
-                <div class="metric-label" style="font-size:11px;">AVG DELAY</div>
-                <div class="metric-value text-danger">82 DAYS</div>
-              </div>
-            </div>
+            </td>
+          </tr>
 
-          </div>
-        </div>
+          <!-- TWO COLUMN ROW (Desktop) -->
+          <tr>
+            <td style="padding:16px;">
 
-        <!-- Column 2: Dealer Onboarding -->
-        <div class="col">
-          <div class="card">
-            <h2>🚗 Dealer Onboarding</h2>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
 
-            <div style="text-align:center; margin-bottom:14px;">
-              <div class="metric-label">TOTAL DEALERS</div>
-              <div class="metric-number">15</div>
-            </div>
+                  <!-- LEFT COLUMN -->
+                  <td class="stack" width="50%" valign="top" style="padding:8px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" style="background-color:#ffffff; border-radius:12px;">
+                      <tr>
+                        <td class="p-card" style="padding:16px; border:1px solid #eef1f5; border-radius:12px;">
+                          <div style="font-size:18px; line-height:22px; font-weight:700; color:#1a3a5c; margin:0 0 16px 0;">
+                            🏢 Showroom Performance
+                          </div>
 
-            <div class="metrics-row">
-              <div class="metric-box">
-                <div class="metric-label" style="font-size:11px;">ACTIVE</div>
-                <div class="metric-value text-success">15</div>
-              </div>
-              <div class="metric-box">
-                <div class="metric-label" style="font-size:11px;">ONBOARDED</div>
-                <div class="metric-value" style="color:#666;">0</div>
-              </div>
-              <div class="metric-box">
-                <div class="metric-label" style="font-size:11px;">DELAYED</div>
-                <div class="metric-value text-danger">14</div>
-              </div>
-            </div>
+                          <div style="text-align:center;">
+                            <div style="font-size:12px; letter-spacing:1px; text-transform:uppercase; color:#666666; line-height:16px;">
+                              TOTAL SHOWROOMS
+                            </div>
+                            <div class="num-main" style="font-size:48px; line-height:52px; font-weight:800; color:#111111; margin:6px 0 12px 0;">
+                              24
+                            </div>
+                          </div>
 
-          </div>
-        </div>
+                          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                            <tr>
+                              <td align="center" width="33.33%" style="padding:8px;">
+                                <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">COMPLETED</div>
+                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#28a745; margin-top:6px;">1</div>
+                              </td>
+                              <td align="center" width="33.33%" style="padding:8px;">
+                                <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">AVG COMPLETION</div>
+                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#ffc107; margin-top:6px;">28%</div>
+                              </td>
+                              <td align="center" width="33.33%" style="padding:8px;">
+                                <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">AVG DELAY</div>
+                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#dc3545; margin-top:6px; white-space:nowrap;">82 DAYS</div>
+                              </td>
+                            </tr>
+                          </table>
 
-      </div>
-    </div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
 
-    <!-- Urgent section -->
-    <div class="delayed">
-      <div class="delayed-title">⚠️ URGENT ACTION REQUIRED</div>
+                  <!-- RIGHT COLUMN -->
+                  <td class="stack" width="50%" valign="top" style="padding:8px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" style="background-color:#ffffff; border-radius:12px;">
+                      <tr>
+                        <td class="p-card" style="padding:16px; border:1px solid #eef1f5; border-radius:12px;">
+                          <div style="font-size:18px; line-height:22px; font-weight:700; color:#1a3a5c; margin:0 0 16px 0;">
+                            🚗 Dealer Onboarding
+                          </div>
 
-      <div class="delayed-grid">
-        <div class="delayed-item">
-          <div class="small">DELAYED SHOWROOMS</div>
-          <div class="big">82</div>
-          <div class="end">DAYS</div>
-        </div>
-        <div class="delayed-item">
-          <div class="small">DELAYED DEALERS</div>
-          <div class="big">14</div>
-          <div class="end">DEALERS</div>
-        </div>
-      </div>
+                          <div style="text-align:center;">
+                            <div style="font-size:12px; letter-spacing:1px; text-transform:uppercase; color:#666666; line-height:16px;">
+                              TOTAL DEALERS
+                            </div>
+                            <div class="num-main" style="font-size:48px; line-height:52px; font-weight:800; color:#111111; margin:6px 0 12px 0;">
+                              15
+                            </div>
+                          </div>
 
-      <div class="delayed-note">
-        ⚡ Please review the dashboard immediately and take corrective action
-      </div>
-    </div>
+                          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                            <tr>
+                              <td align="center" width="33.33%" style="padding:8px;">
+                                <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">ACTIVE</div>
+                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#28a745; margin-top:6px;">15</div>
+                              </td>
+                              <td align="center" width="33.33%" style="padding:8px;">
+                                <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">ONBOARDED</div>
+                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#666666; margin-top:6px;">0</div>
+                              </td>
+                              <td align="center" width="33.33%" style="padding:8px;">
+                                <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">DELAYED</div>
+                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#dc3545; margin-top:6px;">14</div>
+                              </td>
+                            </tr>
+                          </table>
 
-    <!-- Footer -->
-    <div class="footer">
-      This is an automated report from AIS Command Center<br />
-      © 2024 AIS Windows | All Rights Reserved
-    </div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
 
-  </div>
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+
+          <!-- URGENT SECTION (bgcolor fixes the "white box" on system) -->
+          <tr>
+            <td style="padding:0 16px 16px 16px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#dc3545" style="background-color:#dc3545; border-radius:12px;">
+                <tr>
+                  <td align="center" style="padding:22px 18px; color:#ffffff;">
+
+                    <div style="font-size:16px; line-height:20px; font-weight:800; letter-spacing:2px; text-transform:uppercase;">
+                      ⚠️ URGENT ACTION REQUIRED
+                    </div>
+
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:16px;">
+                      <tr>
+
+                        <td class="stack" width="50%" align="center" valign="top" style="padding:8px;">
+                          <div style="font-size:13px; line-height:16px; opacity:0.95;">
+                            DELAYED SHOWROOMS
+                          </div>
+                          <div class="num-big" style="font-size:64px; line-height:66px; font-weight:900; margin:6px 0; color:#ffffff;">
+                            82
+                          </div>
+                          <div style="font-size:14px; line-height:18px; font-weight:800; color:#ffffff;">
+                            DAYS
+                          </div>
+                        </td>
+
+                        <td class="stack" width="50%" align="center" valign="top" style="padding:8px;">
+                          <div style="font-size:13px; line-height:16px; opacity:0.95;">
+                            DELAYED DEALERS
+                          </div>
+                          <div class="num-big" style="font-size:64px; line-height:66px; font-weight:900; margin:6px 0; color:#ffffff;">
+                            14
+                          </div>
+                          <div style="font-size:14px; line-height:18px; font-weight:800; color:#ffffff;">
+                            DEALERS
+                          </div>
+                        </td>
+
+                      </tr>
+                    </table>
+
+                    <div style="margin-top:16px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.35); font-size:14px; line-height:18px; color:#ffffff;">
+                      ⚡ Please review the dashboard immediately and take corrective action
+                    </div>
+
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- FOOTER -->
+          <tr>
+            <td align="center" bgcolor="#f8f9fa" style="background-color:#f8f9fa; padding:16px; font-size:12px; line-height:16px; color:#999999; border-radius:0 0 12px 12px; border-top:1px solid #e6e6e6;">
+              This is an automated report from AIS Command Center<br>
+              © 2024 AIS Windows | All Rights Reserved
+            </td>
+          </tr>
+
+        </table>
+
+        <!--[if mso]>
+          </td></tr>
+        </table>
+        <![endif]-->
+
+      </td>
+    </tr>
+  </table>
+
 </body>
 </html>
 `;
