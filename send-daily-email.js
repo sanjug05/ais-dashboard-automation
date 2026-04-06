@@ -231,172 +231,231 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AIS Dashboard Report</title>
-<style>
-  body {
-    font-family: 'Segoe UI', Arial, sans-serif;
-    margin: 0;
-    padding: 0;
-    background-color: #f0f2f5;
-  }
-  .container {
-    max-width: 700px;
-    margin: 20px auto;
-    background: #ffffff;
-    border-radius: 16px;
-    overflow: hidden;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-  }
-  .header {
-    background: linear-gradient(135deg, #0054A6 0%, #003d7a 100%);
-    padding: 30px;
-    text-align: center;
-  }
-  .header h1 {
-    color: #ffffff;
-    margin: 0;
-    font-size: 24px;
-  }
-  .header p {
-    color: rgba(255,255,255,0.9);
-    margin: 8px 0 0;
-    font-size: 13px;
-  }
-  .content {
-    padding: 30px;
-  }
-  .date-badge {
-    background: #e8f0fe;
-    padding: 12px;
-    text-align: center;
-    border-radius: 8px;
-    margin-bottom: 25px;
-  }
-  .section {
-    margin-bottom: 30px;
-  }
-  .section-title {
-    font-size: 18px;
-    font-weight: 600;
-    color: #0054A6;
-    margin-bottom: 15px;
-    padding-bottom: 8px;
-    border-bottom: 2px solid #e0e0e0;
-  }
-  .stats-grid {
-    display: flex;
-    justify-content: space-around;
-    flex-wrap: wrap;
-    gap: 15px;
-    background: #f8f9fa;
-    padding: 20px;
-    border-radius: 12px;
-  }
-  .stat-card {
-    text-align: center;
-    flex: 1;
-    min-width: 100px;
-  }
-  .stat-number {
-    font-size: 32px;
-    font-weight: 800;
-    color: #C6A43B;
-  }
-  .stat-label {
-    font-size: 11px;
-    color: #666;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  .delayed-box {
-    background: #fce8e6;
-    padding: 15px;
-    border-radius: 8px;
-    border-left: 4px solid #e74c3c;
-  }
-  .footer {
-    background: #f8f9fa;
-    padding: 20px;
-    text-align: center;
-    font-size: 11px;
-    color: #888;
-    border-top: 1px solid #e0e0e0;
-  }
-  @media (max-width: 500px) {
-    .stats-grid { flex-direction: column; }
-    .content { padding: 20px; }
-  }
-</style>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8">
+  <title>AIS Command Center Report</title>
+  <style>
+    /* General styles */
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f4f6f9;
+      font-family: 'Segoe UI', Arial, sans-serif;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      background-color: #ffffff;
+    }
+    /* Responsive - Desktop (2-column) */
+    @media only screen and (min-width: 600px) {
+      .row {
+        display: table;
+        width: 100%;
+      }
+      .col-2 {
+        display: table-cell;
+        width: 50%;
+        vertical-align: top;
+      }
+      .container {
+        max-width: 700px;
+      }
+    }
+    /* Card styles */
+    .card {
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 20px;
+      margin: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    .header {
+      background: #1a3a5c;
+      padding: 20px;
+      text-align: center;
+      border-radius: 12px 12px 0 0;
+    }
+    .header h1 {
+      color: #ffffff;
+      margin: 0;
+      font-size: 24px;
+    }
+    .metric {
+      text-align: center;
+      padding: 16px;
+    }
+    .metric-number {
+      font-size: 42px;
+      font-weight: bold;
+      margin: 10px 0;
+    }
+    .metric-label {
+      color: #666;
+      font-size: 14px;
+    }
+    .completed-number { color: #28a745; }
+    .avg-completion { color: #ffc107; }
+    .avg-delay { color: #dc3545; }
+    .active-number { color: #28a745; }
+    .delayed-number { color: #dc3545; }
+    .warning-box {
+      background: #fff3cd;
+      border-left: 4px solid #ffc107;
+      padding: 16px;
+      margin: 16px;
+      border-radius: 8px;
+    }
+    .footer {
+      background: #f8f9fa;
+      text-align: center;
+      padding: 16px;
+      font-size: 12px;
+      color: #999;
+      border-top: 1px solid #e0e0e0;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #e0e0e0;
+      margin: 8px 0;
+    }
+    /* Ensure colors show on all email clients */
+    .text-success { color: #28a745 !important; }
+    .text-warning { color: #ffc107 !important; }
+    .text-danger { color: #dc3545 !important; }
+    .bg-primary { background-color: #1a3a5c !important; }
+  </style>
 </head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>📊 AIS Command Center</h1>
-      <p>Daily Intelligence Report</p>
-    </div>
-    <div class="content">
-      <div class="date-badge">
-        📅 <strong>${dateStr}</strong>
-      </div>
+<body style="margin:0; padding:0; background:#f4f6f9;">
 
-      <div class="section">
-        <div class="section-title">🏢 Showroom Performance</div>
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-number">${totalShowrooms}</div>
-            <div class="stat-label">Total Showrooms</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-number">${completedShowrooms}</div>
-            <div class="stat-label">Completed</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-number">${avgCompletion}%</div>
-            <div class="stat-label">Avg Completion</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-number">${globalAvgDelay}</div>
-            <div class="stat-label">Avg Delay (Days)</div>
-          </div>
-        </div>
-      </div>
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f6f9;">
+  <tr>
+    <td align="center">
+      <table class="container" cellpadding="0" cellspacing="0" border="0" style="max-width:700px; width:100%; background:#ffffff; border-radius:12px;">
+        
+        <!-- Header -->
+        <tr>
+          <td class="header" style="background:#1a3a5c; padding:20px; text-align:center; border-radius:12px 12px 0 0;">
+            <h1 style="color:#ffffff; margin:0; font-size:24px;">📊 Showroom Performance</h1>
+          </td>
+        </tr>
 
-      <div class="section">
-        <div class="section-title">👥 Dealer Onboarding</div>
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-number">${totalDealers}</div>
-            <div class="stat-label">Total Dealers</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-number">${activeDealers}</div>
-            <div class="stat-label">Active</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-number">${completedDealers}</div>
-            <div class="stat-label">Onboarded</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-number">${delayedDealers}</div>
-            <div class="stat-label">Delayed</div>
-          </div>
-        </div>
-      </div>
+        <!-- Showroom Section -->
+        <tr>
+          <td style="padding:20px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="center" style="padding:8px;">
+                  <div class="metric">
+                    <div class="metric-label">TOTAL SHOWROOMS</div>
+                    <div class="metric-number" style="font-size:42px; font-weight:bold;">24</div>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td align="center" style="width:33%; padding:8px;">
+                        <div class="metric">
+                          <div class="metric-label">COMPLETED</div>
+                          <div class="metric-number text-success" style="font-size:32px; color:#28a745;">1</div>
+                        </div>
+                      </td>
+                      <td align="center" style="width:33%; padding:8px;">
+                        <div class="metric">
+                          <div class="metric-label">AVG COMPLETION</div>
+                          <div class="metric-number text-warning" style="font-size:32px; color:#ffc107;">28%</div>
+                        </div>
+                      </td>
+                      <td align="center" style="width:33%; padding:8px;">
+                        <div class="metric">
+                          <div class="metric-label">AVG DELAY</div>
+                          <div class="metric-number text-danger" style="font-size:32px; color:#dc3545;">82 DAYS</div>
+                        </div>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
 
-      <div class="section">
-        <div class="section-title">⚠️ Delayed Projects</div>
-        <div class="delayed-box">
-          ${delayedMessage}
-        </div>
-      </div>
-    </div>
-    <div class="footer">
-      <p>This is an automated report from AIS Command Center</p>
-      <p>© 2026 AIS Windows | All Rights Reserved</p>
-    </div>
-  </div>
+        <tr><td><hr style="border:0; border-top:1px solid #e0e0e0; margin:0 20px;"></td></tr>
+
+        <!-- Dealer Onboarding Section -->
+        <tr>
+          <td style="padding:20px;">
+            <h2 style="color:#1a3a5c; margin:0 0 20px 0; font-size:20px;">🚗 Dealer Onboarding</h2>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="center" style="padding:8px;">
+                  <div class="metric">
+                    <div class="metric-label">TOTAL DEALERS</div>
+                    <div class="metric-number" style="font-size:42px; font-weight:bold;">15</div>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td align="center" style="width:33%; padding:8px;">
+                        <div class="metric">
+                          <div class="metric-label">ACTIVE</div>
+                          <div class="metric-number text-success" style="font-size:32px; color:#28a745;">15</div>
+                        </div>
+                      </td>
+                      <td align="center" style="width:33%; padding:8px;">
+                        <div class="metric">
+                          <div class="metric-label">ONBOARDED</div>
+                          <div class="metric-number" style="font-size:32px;">0</div>
+                        </div>
+                      </td>
+                      <td align="center" style="width:33%; padding:8px;">
+                        <div class="metric">
+                          <div class="metric-label">DELAYED</div>
+                          <div class="metric-number text-danger" style="font-size:32px; color:#dc3545;">14</div>
+                        </div>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <tr><td><hr style="border:0; border-top:1px solid #e0e0e0; margin:0 20px;"></td></tr>
+
+        <!-- Warning Alert -->
+        <tr>
+          <td style="padding:20px;">
+            <div class="warning-box" style="background:#fff3cd; border-left:4px solid #ffc107; padding:16px; border-radius:8px;">
+              <strong style="color:#856404;">⚠️ Delayed Projects</strong><br>
+              <span style="color:#856404;">82 showroom day(s) and 14 dealer(s) are currently delayed. Please review the dashboard for details.</span>
+            </div>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td class="footer" style="background:#f8f9fa; text-align:center; padding:16px; font-size:12px; color:#999; border-radius:0 0 12px 12px;">
+            This is an automated report from AIS Command Center<br>
+            © 2024 AIS Windows | All Rights Reserved
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+</table>
+
 </body>
 </html>
   `;
