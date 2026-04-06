@@ -258,7 +258,7 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
     }
 
     .container{
-      max-width:900px;              /* wider = desktop friendly */
+      max-width:900px;
       margin:0 auto;
       background:var(--card);
       border-radius:var(--radius);
@@ -295,7 +295,7 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
     }
     .col{
       flex:1 1 0;
-      min-width:320px; /* ensures not too narrow; wraps on smaller screens */
+      min-width:320px;
     }
 
     .card{
@@ -342,7 +342,7 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
       font-weight:800;
       margin-top:6px;
       line-height:1.1;
-      white-space:nowrap; /* prevents “82 DAYS” splitting awkwardly */
+      white-space:nowrap;
     }
 
     .text-success{ color:var(--success); }
@@ -416,6 +416,16 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
       .delayed-item .big{ font-size:54px; }
       .delayed-grid{ flex-direction:column; }
     }
+
+    /* HIDE TABLE FALLBACK ON MODERN CLIENTS - KEEP FOR OUTLOOK */
+    .fallback-table {
+      display: none;
+    }
+    /* SHOW TABLE FALLBACK ONLY FOR OLD EMAIL CLIENTS */
+    @media only screen and (max-width: 0px) {
+      .fallback-table { display: table; }
+      .flex-layout { display: none; }
+    }
   </style>
 </head>
 
@@ -428,8 +438,74 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
       <p>Daily Performance Report</p>
     </div>
 
-    <!-- Two column section (desktop) -->
-    <div class="section">
+    <!-- ============================================ -->
+    <!-- TWO COLUMN SECTION WITH EMAIL COMPATIBILITY   -->
+    <!-- ============================================ -->
+
+    <!-- FALLBACK #1: Outlook/Email Client Compatible Table (hidden on modern browsers) -->
+    <table class="fallback-table" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; display:none; border-collapse:collapse;">
+      <tr>
+        <td width="50%" valign="top" style="padding:8px;">
+          <!-- SHOWROOM CARD (Table version for Outlook) -->
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff; border-radius:12px;">
+            <tr><td style="padding:16px;">
+              <div style="color:#1a3a5c; font-size:18px; font-weight:bold; margin-bottom:16px;">🏢 Showroom Performance</div>
+              <div style="text-align:center; margin-bottom:14px;">
+                <div style="color:#666666; font-size:12px; letter-spacing:1px;">TOTAL SHOWROOMS</div>
+                <div style="font-size:48px; font-weight:800; margin:6px 0;">24</div>
+              </div>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center" width="33%" style="padding:4px;">
+                    <div style="color:#666666; font-size:11px;">COMPLETED</div>
+                    <div style="font-size:28px; font-weight:800; color:#28a745;">1</div>
+                  </td>
+                  <td align="center" width="33%" style="padding:4px;">
+                    <div style="color:#666666; font-size:11px;">AVG COMPLETION</div>
+                    <div style="font-size:28px; font-weight:800; color:#ffc107;">28%</div>
+                  </td>
+                  <td align="center" width="33%" style="padding:4px;">
+                    <div style="color:#666666; font-size:11px;">AVG DELAY</div>
+                    <div style="font-size:28px; font-weight:800; color:#dc3545;">82 DAYS</div>
+                  </td>
+                </tr>
+              </table>
+            </td></td>
+          </table>
+        </td>
+        <td width="50%" valign="top" style="padding:8px;">
+          <!-- DEALER CARD (Table version for Outlook) -->
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff; border-radius:12px;">
+            <tr><td style="padding:16px;">
+              <div style="color:#1a3a5c; font-size:18px; font-weight:bold; margin-bottom:16px;">🚗 Dealer Onboarding</div>
+              <div style="text-align:center; margin-bottom:14px;">
+                <div style="color:#666666; font-size:12px; letter-spacing:1px;">TOTAL DEALERS</div>
+                <div style="font-size:48px; font-weight:800; margin:6px 0;">15</div>
+              </div>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center" width="33%" style="padding:4px;">
+                    <div style="color:#666666; font-size:11px;">ACTIVE</div>
+                    <div style="font-size:28px; font-weight:800; color:#28a745;">15</div>
+                  </td>
+                  <td align="center" width="33%" style="padding:4px;">
+                    <div style="color:#666666; font-size:11px;">ONBOARDED</div>
+                    <div style="font-size:28px; font-weight:800; color:#666666;">0</div>
+                  </td>
+                  <td align="center" width="33%" style="padding:4px;">
+                    <div style="color:#666666; font-size:11px;">DELAYED</div>
+                    <div style="font-size:28px; font-weight:800; color:#dc3545;">14</div>
+                  </td>
+                </tr>
+              </table>
+            </td></td>
+          </table>
+        </td>
+      </tr>
+    </table>
+
+    <!-- MAIN FLEX LAYOUT (for modern browsers/email clients) -->
+    <div class="section flex-layout">
       <div class="two-col">
 
         <!-- Column 1: Showroom Performance -->
@@ -491,7 +567,7 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
       </div>
     </div>
 
-    <!-- Urgent section -->
+    <!-- Urgent section (already email compatible) -->
     <div class="delayed">
       <div class="delayed-title">⚠️ URGENT ACTION REQUIRED</div>
 
@@ -522,7 +598,7 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
   </div>
 </body>
 </html>
-  `;
+`;
 }
 
 // Send email
