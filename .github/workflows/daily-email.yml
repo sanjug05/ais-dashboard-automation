@@ -2,8 +2,8 @@ name: Daily Email Report
 
 on:
   schedule:
-    # Runs at 9:00 AM IST (3:30 AM UTC) daily
-    - cron: '30 3 * * *'
+    # 3:00 AM UTC = 8:30 AM IST (buffer for GitHub delays)
+    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
       manual_recipient:
