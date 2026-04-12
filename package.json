@@ -4,15 +4,7 @@
   "type": "module",
   "description": "AIS Command Center Daily Intelligence Report",
   "main": "send-daily-email.js",
-  "scripts": {
-    "send-report": "node send-daily-email.js",
-    "send-report-force": "FORCE_RUN=true node send-daily-email.js"
-  },
   "dependencies": {
-    "firebase-admin": "^12.0.0",
-    "google-auth-library": "^9.0.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "firebase-admin": "11.11.0"
   }
 }
