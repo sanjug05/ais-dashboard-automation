@@ -1,6 +1,6 @@
-// send-daily-email.js - SSL BYPASS VERSION
-import https from 'https';
-import axios from 'axios';
+// send-daily-email.js - FIREBASE ADMIN SDK VERSION
+import { initializeApp, cert } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
 
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
@@ -15,12 +15,10 @@ const FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY;
 
 const DEFAULT_RECIPIENTS = [
   'sanju.gupta@aisglass.com',
+  'mayank.tomar@aisglass.com',
+  'krishna.verma@aisglass.com',
+  'nidhi.tiwari@aisglass.com'
 ];
-
-// Create HTTPS agent that ignores SSL issues (for GitHub Actions only)
-const httpsAgent = new https.Agent({
-  rejectUnauthorized: false
-});
 
 const PHASES_CONFIG = [
   { id: 'dim', name: "Dimensions Submission", days: 5 },
@@ -48,91 +46,60 @@ let reportData = {
   totalCritical: 0, totalDelayedProjects: 0
 };
 
+let db = null;
+
 function formatPrivateKey(key) {
   if (!key) return null;
   return key.replace(/\\n/g, '\n').replace(/\\r/g, '\r');
 }
 
-async function getAccessToken() {
-  const jwt = await import('jsonwebtoken');
-  const privateKey = formatPrivateKey(FIREBASE_PRIVATE_KEY);
-  
-  const payload = {
-    iss: FIREBASE_CLIENT_EMAIL,
-    scope: 'https://www.googleapis.com/auth/datastore',
-    aud: 'https://oauth2.googleapis.com/token',
-    iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + 3600
-  };
-  
-  const token = jwt.sign(payload, privateKey, { algorithm: 'RS256' });
-  
-  const response = await axios.post('https://oauth2.googleapis.com/token', {
-    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-    assertion: token
-  }, { httpsAgent });
-  
-  return response.data.access_token;
-}
-
-function parseFirestoreValue(value) {
-  if (value === undefined || value === null) return null;
-  if (value.stringValue !== undefined) return value.stringValue;
-  if (value.integerValue !== undefined) return parseInt(value.integerValue);
-  if (value.doubleValue !== undefined) return parseFloat(value.doubleValue);
-  if (value.booleanValue !== undefined) return value.booleanValue;
-  if (value.nullValue !== undefined) return null;
-  if (value.timestampValue !== undefined) return value.timestampValue;
-  
-  if (value.mapValue && value.mapValue.fields) {
-    const obj = {};
-    for (const [key, val] of Object.entries(value.mapValue.fields)) {
-      obj[key] = parseFirestoreValue(val);
+async function initFirebase() {
+  try {
+    if (!FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
+      console.error('❌ Missing Firebase credentials');
+      return false;
     }
-    return obj;
+
+    const formattedKey = formatPrivateKey(FIREBASE_PRIVATE_KEY);
+    
+    // Set GRPC environment variable to help with SSL
+    process.env.GRPC_VERBOSITY = 'ERROR';
+    process.env.GRPC_TRACE = '';
+
+    initializeApp({
+      credential: cert({
+        projectId: FIREBASE_PROJECT_ID,
+        clientEmail: FIREBASE_CLIENT_EMAIL,
+        privateKey: formattedKey
+      }),
+      projectId: FIREBASE_PROJECT_ID
+    });
+
+    db = getFirestore();
+    
+    // Test connection
+    try {
+      await db.collection('showrooms').limit(1).get();
+      console.log('✅ Firebase connected successfully');
+    } catch (e) {
+      console.log('⚠️  Firebase connection test failed, but continuing...');
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Firebase init failed:', error.message);
+    return false;
   }
-  
-  if (value.arrayValue && value.arrayValue.values) {
-    return value.arrayValue.values.map(v => parseFirestoreValue(v));
-  }
-  
-  return null;
 }
 
 async function fetchCollection(collectionName) {
+  if (!db) return [];
+  
   try {
     console.log(`   Fetching ${collectionName}...`);
-    
-    const accessToken = await getAccessToken();
-    
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/${collectionName}`;
-    
-    const response = await axios.get(url, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`
-      },
-      httpsAgent
-    });
-    
-    const data = response.data;
-    
-    if (!data.documents) {
-      console.log(`   ✅ ${collectionName}: 0 documents`);
-      return [];
-    }
-    
-    const docs = data.documents.map(doc => {
-      const result = { id: doc.name.split('/').pop() };
-      
-      if (doc.fields) {
-        for (const [key, value] of Object.entries(doc.fields)) {
-          result[key] = parseFirestoreValue(value);
-        }
-      }
-      
-      return result;
-    });
-    
+    const snapshot = await db.collection(collectionName).get();
+    const docs = [];
+    snapshot.forEach(doc => docs.push({ id: doc.id, ...doc.data() }));
     console.log(`   ✅ ${collectionName}: ${docs.length} documents`);
     return docs;
   } catch (error) {
@@ -292,15 +259,19 @@ async function sendEmail(recipient, htmlBody, dateStr) {
     : `✅ AIS Command Center · ${dateStr}`;
   
   try {
-    const res = await axios.post('https://api.emailjs.com/api/v1.0/email/send', {
-      service_id: SERVICE_ID,
-      template_id: TEMPLATE_ID,
-      user_id: PUBLIC_KEY,
-      accessToken: PRIVATE_KEY,
-      template_params: { to_email: recipient, subject, date: dateStr, message: htmlBody }
-    }, { httpsAgent });
+    const res = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        service_id: SERVICE_ID,
+        template_id: TEMPLATE_ID,
+        user_id: PUBLIC_KEY,
+        accessToken: PRIVATE_KEY,
+        template_params: { to_email: recipient, subject, date: dateStr, message: htmlBody }
+      })
+    });
     
-    if (res.status === 200) {
+    if (res.ok) {
       console.log(`   ✅ Sent to: ${recipient}`);
       return true;
     }
@@ -331,12 +302,9 @@ async function main() {
     process.exit(1); 
   }
   
-  if (!FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
-    console.error('❌ Missing Firebase credentials');
-    process.exit(1);
-  }
+  if (!await initFirebase()) process.exit(1);
   
-  console.log('📡 Fetching data...');
+  console.log('\n📡 Fetching data...');
   const showrooms = await fetchCollection('showrooms');
   const dealers = await fetchCollection('dealerOnboarding');
   
