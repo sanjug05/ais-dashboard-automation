@@ -1,4 +1,4 @@
-// send-daily-email.js - ENVIRONMENT VARIABLE VERSION
+// send-daily-email.js - FIXED VERSION
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
@@ -7,8 +7,8 @@ const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
 const PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY;
 const MANUAL_RECIPIENT = process.env.MANUAL_RECIPIENT;
+const FORCE_RUN = process.env.FORCE_RUN === 'true'; // New: force run override
 
-// Use environment variables instead of a file
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'ais-showroom-dashboard';
 const FIREBASE_CLIENT_EMAIL = process.env.FIREBASE_CLIENT_EMAIL;
 const FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY;
@@ -33,7 +33,8 @@ const PHASES_CONFIG = [
 ];
 
 const STAGE_TARGETS = {
-  'Interested': 0, 'Shortlisted': 3, 'CFT Selected': 8, 'Documentation': 15, 'Onboarded': 22
+  'Interested': 0, 'Shortlisted': 3, 'CFT Selected': 8, 
+  'Documentation': 15, 'Onboarded': 22
 };
 
 const DELAY_THRESHOLDS = { WARNING: 6, CRITICAL: 10 };
@@ -47,7 +48,6 @@ let reportData = {
 
 let db = null;
 
-// Initialize Firebase from environment variables
 async function initFirebase() {
   try {
     if (!FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
@@ -139,24 +139,39 @@ function isDropped(dealer) {
 
 function getFormattedDate() {
   const now = new Date();
-  return now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).replace(',', ' ·');
+  return now.toLocaleString('en-IN', { 
+    timeZone: 'Asia/Kolkata', 
+    day: '2-digit', month: 'short', year: 'numeric', 
+    hour: '2-digit', minute: '2-digit', hour12: false 
+  }).replace(',', ' ·');
 }
 
 function isHoliday() {
   const today = new Date();
-  const day = today.getDay(), date = today.getDate();
+  const day = today.getDay();
+  const date = today.getDate();
+  
+  // Sunday is holiday
   if (day === 0) return true;
+  
+  // Check for 2nd and 4th Saturday
   if (day === 6) {
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const firstSaturday = firstDayOfMonth.getDay() === 6 ? 1 : 7 - firstDayOfMonth.getDay();
     const saturdayCount = Math.ceil((date - firstSaturday + 1) / 7);
     if (saturdayCount === 2 || saturdayCount === 4) return true;
   }
+  
   return false;
 }
 
 function calculateReportData(showrooms, dealers) {
-  reportData = { totalShowrooms: 0, completedShowrooms: 0, activeDelayCount: 0, criticalShowrooms: 0, avgCompletion: 0, globalAvgDelay: 0, totalDealers: 0, activeDealers: 0, completedDealers: 0, delayedDealers: 0, criticalDealers: 0, conversionRate: 0, totalCritical: 0, totalDelayedProjects: 0 };
+  reportData = { 
+    totalShowrooms: 0, completedShowrooms: 0, activeDelayCount: 0, criticalShowrooms: 0,
+    avgCompletion: 0, globalAvgDelay: 0, totalDealers: 0, activeDealers: 0,
+    completedDealers: 0, delayedDealers: 0, criticalDealers: 0, conversionRate: 0,
+    totalCritical: 0, totalDelayedProjects: 0 
+  };
   
   reportData.totalShowrooms = showrooms.length;
   let totalPct = 0, totalAvgDelaySum = 0;
@@ -164,7 +179,10 @@ function calculateReportData(showrooms, dealers) {
     const stats = calculateShowroomStats(s);
     totalPct += stats.pct;
     if (stats.pct === 100) reportData.completedShowrooms++;
-    if (stats.maxDelay > 0) { totalAvgDelaySum += stats.avgDelay; reportData.activeDelayCount++; }
+    if (stats.maxDelay > 0) { 
+      totalAvgDelaySum += stats.avgDelay; 
+      reportData.activeDelayCount++; 
+    }
     if (stats.maxDelay >= DELAY_THRESHOLDS.CRITICAL) reportData.criticalShowrooms++;
   }
   reportData.avgCompletion = reportData.totalShowrooms > 0 ? Math.round(totalPct / reportData.totalShowrooms) : 0;
@@ -184,16 +202,19 @@ function calculateReportData(showrooms, dealers) {
   reportData.totalDelayedProjects = reportData.activeDelayCount + reportData.delayedDealers;
   reportData.totalCritical = reportData.criticalShowrooms + reportData.criticalDealers;
 
-  console.log(`\n📊 Showrooms: ${reportData.totalShowrooms} total | ${reportData.completedShowrooms} completed | ${reportData.activeDelayCount} delayed | ${reportData.criticalShowrooms} critical`);
-  console.log(`📊 Dealers: ${reportData.totalDealers} total | ${reportData.activeDealers} active | ${reportData.completedDealers} completed | ${reportData.delayedDealers} delayed`);
+  console.log(`\n📊 Showrooms: ${reportData.totalShowrooms} total | ${reportData.completedShowrooms} completed | ${reportData.activeDelayCount} delayed`);
+  console.log(`📊 Dealers: ${reportData.totalDealers} total | ${reportData.activeDealers} active | ${reportData.completedDealers} completed`);
 }
 
 function buildHtmlReport(dateStr) {
   const urgencyConfig = reportData.totalCritical > 0 
-    ? { bg: '#DC2626', border: '#B91C1C', icon: '🚨', title: 'CRITICAL ACTION REQUIRED', message: `${reportData.totalCritical} project${reportData.totalCritical > 1 ? 's' : ''} critically delayed (10+ days).` }
+    ? { bg: '#DC2626', border: '#B91C1C', icon: '🚨', title: 'CRITICAL ACTION REQUIRED', 
+        message: `${reportData.totalCritical} project${reportData.totalCritical > 1 ? 's' : ''} critically delayed (10+ days).` }
     : reportData.totalDelayedProjects > 0 
-    ? { bg: '#F59E0B', border: '#D97706', icon: '⚠️', title: 'ATTENTION NEEDED', message: `${reportData.totalDelayedProjects} project${reportData.totalDelayedProjects > 1 ? 's' : ''} delayed. Review dashboard.` }
-    : { bg: '#10B981', border: '#059669', icon: '✅', title: 'ALL SYSTEMS OPERATIONAL', message: 'No delayed projects. All showrooms and dealers on track.' };
+    ? { bg: '#F59E0B', border: '#D97706', icon: '⚠️', title: 'ATTENTION NEEDED', 
+        message: `${reportData.totalDelayedProjects} project${reportData.totalDelayedProjects > 1 ? 's' : ''} delayed. Review dashboard.` }
+    : { bg: '#10B981', border: '#059669', icon: '✅', title: 'ALL SYSTEMS OPERATIONAL', 
+        message: 'No delayed projects. All showrooms and dealers on track.' };
 
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>AIS Command Center</title>
@@ -216,38 +237,83 @@ function buildHtmlReport(dateStr) {
 }
 
 async function sendEmail(recipient, htmlBody, dateStr) {
-  const subject = reportData.totalCritical > 0 ? `🚨 CRITICAL · AIS Command Center · ${dateStr}` : reportData.totalDelayedProjects > 0 ? `⚠️ ATTENTION · AIS Command Center · ${dateStr}` : `✅ AIS Command Center · ${dateStr}`;
+  const subject = reportData.totalCritical > 0 
+    ? `🚨 CRITICAL · AIS Command Center · ${dateStr}` 
+    : reportData.totalDelayedProjects > 0 
+    ? `⚠️ ATTENTION · AIS Command Center · ${dateStr}` 
+    : `✅ AIS Command Center · ${dateStr}`;
+  
   try {
     const res = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ service_id: SERVICE_ID, template_id: TEMPLATE_ID, user_id: PUBLIC_KEY, accessToken: PRIVATE_KEY, template_params: { to_email: recipient, subject, date: dateStr, message: htmlBody } })
+      method: 'POST', 
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        service_id: SERVICE_ID, 
+        template_id: TEMPLATE_ID, 
+        user_id: PUBLIC_KEY, 
+        accessToken: PRIVATE_KEY, 
+        template_params: { to_email: recipient, subject, date: dateStr, message: htmlBody } 
+      })
     });
-    if (res.ok) { console.log(`   ✅ Sent to: ${recipient}`); return true; }
-    console.error(`   ❌ Failed: ${recipient}`); return false;
-  } catch (e) { console.error(`   ❌ Error: ${recipient}`); return false; }
+    if (res.ok) { 
+      console.log(`   ✅ Sent to: ${recipient}`); 
+      return true; 
+    }
+    const errorText = await res.text();
+    console.error(`   ❌ Failed: ${recipient} - ${errorText.substring(0, 100)}`); 
+    return false;
+  } catch (e) { 
+    console.error(`   ❌ Error: ${recipient} - ${e.message}`); 
+    return false; 
+  }
 }
 
 async function main() {
   console.log('\n╔══════════════════════════════════════════════╗');
   console.log('║     AIS COMMAND CENTER · INTELLIGENCE REPORT    ║');
   console.log('╚══════════════════════════════════════════════╝\n');
+  
   const dateStr = getFormattedDate();
   console.log(`📅 ${dateStr}`);
-  if (!MANUAL_RECIPIENT && isHoliday()) { console.log('📅 Holiday. Skipping.'); process.exit(0); }
-  if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) { console.error('❌ Missing EmailJS credentials'); process.exit(1); }
+  
+  // Check holiday (skip if not forced)
+  if (!FORCE_RUN && !MANUAL_RECIPIENT && isHoliday()) { 
+    console.log('📅 Holiday detected. Use FORCE_RUN=true to override.');
+    console.log('   Or set MANUAL_RECIPIENT for testing.\n');
+    process.exit(0); 
+  }
+  
+  if (FORCE_RUN) {
+    console.log('⚠️  FORCE_RUN enabled - ignoring holiday check\n');
+  }
+  
+  if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) { 
+    console.error('❌ Missing EmailJS credentials'); 
+    process.exit(1); 
+  }
+  
   if (!await initFirebase()) process.exit(1);
+  
   console.log('\n📡 Fetching data...');
   const showrooms = await fetchCollection('showrooms');
   const dealers = await fetchCollection('dealerOnboarding');
+  
   calculateReportData(showrooms, dealers);
   const htmlBody = buildHtmlReport(dateStr);
+  
   const recipients = MANUAL_RECIPIENT?.trim() ? [MANUAL_RECIPIENT] : DEFAULT_RECIPIENTS;
   console.log(`\n📧 Sending to ${recipients.length} recipient(s)...\n`);
+  
   let success = 0;
-  for (const r of recipients) { if (await sendEmail(r, htmlBody, dateStr)) success++; await new Promise(r => setTimeout(r, 1000)); }
+  for (const r of recipients) { 
+    if (await sendEmail(r, htmlBody, dateStr)) success++; 
+    await new Promise(resolve => setTimeout(resolve, 1000)); 
+  }
+  
   console.log(`\n╔══════════════════════════════════════════════╗`);
-  console.log(`║   Complete: ${success}/${recipients.length} delivered           ║`);
+  console.log(`║   Complete: ${success}/${recipients.length} delivered                    ║`);
   console.log(`╚══════════════════════════════════════════════╝\n`);
+  
   process.exit(success === 0 ? 1 : 0);
 }
 
