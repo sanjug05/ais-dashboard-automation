@@ -1,5 +1,5 @@
-// send-daily-email.js - FINAL WORKING VERSION
-// Uses Firestore REST API (no gRPC/SSL issues)
+// send-daily-email.js - WITH OPENSSL LEGACY PROVIDER FIX
+const crypto = require('crypto');
 
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
@@ -14,7 +14,7 @@ const FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY;
 
 const DEFAULT_RECIPIENTS = [
   'sanju.gupta@aisglass.com',
- ];
+  ];
 
 const PHASES_CONFIG = [
   { id: 'dim', name: "Dimensions Submission", days: 5 },
@@ -44,6 +44,7 @@ let reportData = {
 
 function formatPrivateKey(key) {
   if (!key) return '';
+  // Handle both escaped and unescaped newlines
   return key.replace(/\\n/g, '\n');
 }
 
@@ -58,11 +59,7 @@ function base64UrlEncode(str) {
 function createJWT() {
   const privateKey = formatPrivateKey(FIREBASE_PRIVATE_KEY);
   
-  const header = {
-    alg: 'RS256',
-    typ: 'JWT'
-  };
-  
+  const header = { alg: 'RS256', typ: 'JWT' };
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     iss: FIREBASE_CLIENT_EMAIL,
@@ -76,29 +73,45 @@ function createJWT() {
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
   const signatureInput = `${encodedHeader}.${encodedPayload}`;
   
-  const crypto = require('crypto');
-  const sign = crypto.createSign('RSA-SHA256');
-  sign.update(signatureInput);
-  sign.end();
-  const signature = sign.sign(privateKey, 'base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
-  
-  return `${signatureInput}.${signature}`;
+  // Use crypto.sign with try-catch for better error handling
+  try {
+    const sign = crypto.createSign('RSA-SHA256');
+    sign.update(signatureInput);
+    sign.end();
+    const signature = sign.sign(privateKey, 'base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
+    
+    return `${signatureInput}.${signature}`;
+  } catch (e) {
+    console.error('   JWT signing error:', e.message);
+    throw e;
+  }
 }
 
 async function getAccessToken() {
-  const jwt = createJWT();
-  
-  const response = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`
-  });
-  
-  const data = await response.json();
-  return data.access_token;
+  try {
+    const jwt = createJWT();
+    
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`
+    });
+    
+    const data = await response.json();
+    
+    if (data.error) {
+      console.error('   Token error:', data.error, data.error_description || '');
+      return null;
+    }
+    
+    return data.access_token;
+  } catch (e) {
+    console.error('   getAccessToken error:', e.message);
+    return null;
+  }
 }
 
 function parseFirestoreValue(value) {
@@ -130,6 +143,10 @@ async function fetchCollection(collectionName) {
     console.log(`   Fetching ${collectionName}...`);
     
     const accessToken = await getAccessToken();
+    if (!accessToken) {
+      console.error(`   ❌ Failed to get access token`);
+      return [];
+    }
     
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/${collectionName}`;
     
