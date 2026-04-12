@@ -14,10 +14,7 @@ const FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY;
 
 const DEFAULT_RECIPIENTS = [
   'sanju.gupta@aisglass.com',
-  'mayank.tomar@aisglass.com',
-  'krishna.verma@aisglass.com',
-  'nidhi.tiwari@aisglass.com'
-];
+ ];
 
 const PHASES_CONFIG = [
   { id: 'dim', name: "Dimensions Submission", days: 5 },
