@@ -13,7 +13,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install firebase-admin
-      - run: node send-daily-email.js
+      - run: FORCE_RUN=true node send-daily-email.js  # Added FORCE_RUN
         env:
           EMAILJS_SERVICE_ID: ${{ secrets.EMAILJS_SERVICE_ID }}
           EMAILJS_TEMPLATE_ID: ${{ secrets.EMAILJS_TEMPLATE_ID }}
