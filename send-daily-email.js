@@ -1,4 +1,4 @@
-// send-daily-email.js - FIXED VERSION
+// send-daily-email.js - FIXED PRIVATE KEY PARSING
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
@@ -7,7 +7,7 @@ const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
 const PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY;
 const MANUAL_RECIPIENT = process.env.MANUAL_RECIPIENT;
-const FORCE_RUN = process.env.FORCE_RUN === 'true'; // New: force run override
+const FORCE_RUN = process.env.FORCE_RUN === 'true';
 
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'ais-showroom-dashboard';
 const FIREBASE_CLIENT_EMAIL = process.env.FIREBASE_CLIENT_EMAIL;
@@ -48,28 +48,55 @@ let reportData = {
 
 let db = null;
 
+// FIXED: Properly format private key for Firebase Admin
+function formatPrivateKey(key) {
+  if (!key) return null;
+  
+  // If key already has proper PEM format, return as-is
+  if (key.includes('-----BEGIN PRIVATE KEY-----') && key.includes('-----END PRIVATE KEY-----')) {
+    // Handle various escaped formats
+    return key.replace(/\\n/g, '\n').replace(/\\r/g, '\r');
+  }
+  
+  // If key is base64 or raw, wrap it
+  return `-----BEGIN PRIVATE KEY-----\n${key}\n-----END PRIVATE KEY-----`;
+}
+
 async function initFirebase() {
   try {
     if (!FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
       console.error('❌ Missing Firebase credentials in environment variables');
-      console.log('   Required: FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY');
+      console.log('   FIREBASE_CLIENT_EMAIL:', FIREBASE_CLIENT_EMAIL ? '✓ Present' : '✗ Missing');
+      console.log('   FIREBASE_PRIVATE_KEY:', FIREBASE_PRIVATE_KEY ? '✓ Present (length: ' + FIREBASE_PRIVATE_KEY.length + ')' : '✗ Missing');
       return false;
     }
+
+    const formattedKey = formatPrivateKey(FIREBASE_PRIVATE_KEY);
+    
+    // Debug: Show key format (safely)
+    console.log('   Private key format check:');
+    console.log('   - Contains BEGIN marker:', formattedKey.includes('BEGIN PRIVATE KEY'));
+    console.log('   - Contains END marker:', formattedKey.includes('END PRIVATE KEY'));
+    console.log('   - Total length:', formattedKey.length);
 
     initializeApp({
       credential: cert({
         projectId: FIREBASE_PROJECT_ID,
         clientEmail: FIREBASE_CLIENT_EMAIL,
-        privateKey: FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+        privateKey: formattedKey
       }),
       projectId: FIREBASE_PROJECT_ID
     });
 
     db = getFirestore();
-    console.log('✅ Firebase Admin initialized from environment variables');
+    console.log('✅ Firebase Admin initialized successfully');
     return true;
   } catch (error) {
     console.error('❌ Failed to initialize Firebase Admin:', error.message);
+    console.log('\n📋 Troubleshooting:');
+    console.log('1. Make sure the private key includes BEGIN and END markers');
+    console.log('2. If using GitHub Secrets, paste the ENTIRE key including markers');
+    console.log('3. Try copying directly from the service-account.json file');
     return false;
   }
 }
@@ -77,6 +104,7 @@ async function initFirebase() {
 async function fetchCollection(collectionName) {
   if (!db) return [];
   try {
+    console.log(`   Fetching ${collectionName}...`);
     const snapshot = await db.collection(collectionName).get();
     const docs = [];
     snapshot.forEach(doc => docs.push({ id: doc.id, ...doc.data() }));
@@ -150,18 +178,13 @@ function isHoliday() {
   const today = new Date();
   const day = today.getDay();
   const date = today.getDate();
-  
-  // Sunday is holiday
   if (day === 0) return true;
-  
-  // Check for 2nd and 4th Saturday
   if (day === 6) {
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const firstSaturday = firstDayOfMonth.getDay() === 6 ? 1 : 7 - firstDayOfMonth.getDay();
     const saturdayCount = Math.ceil((date - firstSaturday + 1) / 7);
     if (saturdayCount === 2 || saturdayCount === 4) return true;
   }
-  
   return false;
 }
 
@@ -276,10 +299,8 @@ async function main() {
   const dateStr = getFormattedDate();
   console.log(`📅 ${dateStr}`);
   
-  // Check holiday (skip if not forced)
   if (!FORCE_RUN && !MANUAL_RECIPIENT && isHoliday()) { 
-    console.log('📅 Holiday detected. Use FORCE_RUN=true to override.');
-    console.log('   Or set MANUAL_RECIPIENT for testing.\n');
+    console.log('📅 Holiday detected. Use FORCE_RUN=true to override.\n');
     process.exit(0); 
   }
   
