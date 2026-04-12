@@ -1,4 +1,4 @@
-// send-daily-email.js
+// send-daily-email.js - FIXED VERSION
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
@@ -12,37 +12,60 @@ const DEFAULT_RECIPIENTS = [
   'nidhi.tiwari@aisglass.com'
 ];
 
-// Firestore REST API endpoint (not Realtime Database)
 const FIRESTORE_URL = 'https://firestore.googleapis.com/v1/projects/ais-showroom-dashboard/databases/(default)/documents';
 
-// Helper to fetch Firestore collection
+// FIXED: Exact match with dashboard PHASES_CONFIG (v2.2)
+const PHASES_CONFIG = [
+  { id: 'dim',      name: "Dimensions Submission",    days: 5  },
+  { id: 'cad',      name: "CAD Preparation",           days: 12 },
+  { id: 'plan',     name: "Planning & Order Loading",  days: 15 },
+  { id: 'civil',    name: "Structure & Civil Work",    days: 30 },
+  { id: 'interior', name: "Interior Development",      days: 50 },
+  { id: 'brand',    name: "Branding & Display Setup",  days: 55 },
+  { id: 'delivery', name: "Window Delivery",           days: 65 },  // FIXED: Added missing phase
+  { id: 'window',   name: "Window Installation",       days: 80 },  // FIXED: 80 not 85
+  { id: 'launch',   name: "Final Handover / Launch",   days: 90 }
+];
+
+const DEALER_STAGES = ['Interested', 'Shortlisted', 'CFT Selected', 'Documentation', 'Onboarded'];
+
+// FIXED: Match dashboard dealer targets
+const STAGE_TARGETS = {
+  'Interested': 0,
+  'Shortlisted': 3,
+  'CFT Selected': 8,
+  'Documentation': 15,
+  'Onboarded': 22
+};
+
+// FIXED: Match dashboard delay thresholds
+const DELAY_THRESHOLDS = {
+  WARNING: 6,    // ≥6 days = warning
+  CRITICAL: 10   // ≥10 days = critical
+};
+
 async function fetchCollection(collectionName) {
   try {
     const response = await fetch(`${FIRESTORE_URL}/${collectionName}`);
     const data = await response.json();
-    
     if (!data.documents) return [];
     
-    // Parse Firestore document format
     return data.documents.map(doc => {
       const fields = doc.fields;
       const result = { id: doc.name.split('/').pop() };
       
-      // Convert Firestore fields to JavaScript values
       for (const [key, value] of Object.entries(fields)) {
         if (value.stringValue !== undefined) result[key] = value.stringValue;
         else if (value.integerValue !== undefined) result[key] = parseInt(value.integerValue);
         else if (value.doubleValue !== undefined) result[key] = parseFloat(value.doubleValue);
         else if (value.booleanValue !== undefined) result[key] = value.booleanValue;
         else if (value.mapValue !== undefined) {
-          // Handle nested objects (like data, documents, stageLog, flags)
           const nestedObj = {};
           if (value.mapValue.fields) {
             for (const [nestedKey, nestedValue] of Object.entries(value.mapValue.fields)) {
               if (nestedValue.stringValue !== undefined) nestedObj[nestedKey] = nestedValue.stringValue;
               else if (nestedValue.booleanValue !== undefined) nestedObj[nestedKey] = nestedValue.booleanValue;
               else if (nestedValue.mapValue !== undefined) {
-                // Deep nested (for phase data)
                 const deepObj = {};
                 if (nestedValue.mapValue.fields) {
                   for (const [deepKey, deepValue] of Object.entries(nestedValue.mapValue.fields)) {
@@ -66,36 +89,17 @@ async function fetchCollection(collectionName) {
   }
 }
 
-// EXACT Phase Configuration from your dashboard
-const PHASES_CONFIG = [
-  { id: 'dim',      name: "Dimensions Submission",         days: 5  },
-  { id: 'cad',      name: "CAD Preparation",                days: 12 },
-  { id: 'plan',     name: "Planning & Order Loading",       days: 15 },
-  { id: 'civil',    name: "Structure & Civil Work",         days: 30 },
-  { id: 'interior', name: "Interior Development",           days: 50 },
-  { id: 'brand',    name: "Branding & Display Setup",       days: 65 },
-  { id: 'window',   name: "Window Installation",            days: 85 },
-  { id: 'launch',   name: "Final Handover / Launch",        days: 90 }
-];
-
-// Dealer stages
-const STAGE_TARGETS = {
-  'Interested': 0,
-  'Shortlisted': 3,
-  'CFT Selected': 8,
-  'Documentation': 15,
-  'Onboarded': 22
-};
-
-// EXACT calculateShowroomStats from your dashboard
+// FIXED: Exact match with dashboard calculateShowroomStats
 function calculateShowroomStats(s) {
-  if (!s || !s.startDate) return { pct: 0, avgDelay: 0 };
+  if (!s || !s.startDate) return { pct: 0, avgDelay: 0, totalDelay: 0, maxDelay: 0, completedPhases: 0 };
+  
   const start = new Date(s.startDate + "T00:00:00");
   const today = new Date(); 
-  today.setHours(0,0,0,0);
-  let totalDelay = 0, comp = 0, delayCount = 0;
+  today.setHours(0, 0, 0, 0);
+  
+  if (isNaN(start.getTime())) return { pct: 0, avgDelay: 0, totalDelay: 0, maxDelay: 0, completedPhases: 0 };
 
-  if (isNaN(start.getTime())) return { pct: 0, avgDelay: 0 };
+  let comp = 0, totalDelay = 0, delayCount = 0, maxDelay = 0;
 
   PHASES_CONFIG.forEach(p => {
     const target = new Date(start);
@@ -105,35 +109,34 @@ function calculateShowroomStats(s) {
     if (data.actualDate) {
       comp++;
       const actual = new Date(data.actualDate + "T00:00:00");
-      const d = Math.ceil((actual - target) / 86400000);
-      if (d > 0) {
-        totalDelay += d;
+      const diff = Math.ceil((actual - target) / 86400000);
+      if (diff > 0) {
+        totalDelay += diff;
         delayCount++;
+        maxDelay = Math.max(maxDelay, diff);
       }
     } else {
-      const d = Math.ceil((today - target) / 86400000);
-      if (d > 0) {
-        totalDelay += d;
+      const diff = Math.ceil((today - target) / 86400000);
+      if (diff > 0) {
+        totalDelay += diff;
         delayCount++;
+        maxDelay = Math.max(maxDelay, diff);
       }
     }
   });
   
-  const avgDelay = delayCount > 0 ? Math.round(totalDelay / delayCount) : 0;
-  const pct = Math.round((comp / PHASES_CONFIG.length) * 100);
-  
-  return { pct, avgDelay };
+  return {
+    pct: Math.round((comp / PHASES_CONFIG.length) * 100),
+    avgDelay: delayCount > 0 ? Math.round(totalDelay / delayCount) : 0,
+    totalDelay,
+    maxDelay,
+    completedPhases: comp
+  };
 }
 
-// Check if dealer is dropped
-function isDropped(dealer) {
-  const f = dealer.flags || {};
-  return dealer.status === 'Dropped' || f.cftRejected === true || f.prospectBackout === true;
-}
-
-// Calculate dealer delay
+// FIXED: Exact match with dashboard calcDealerTimeline
 function calculateDealerTimeline(d) {
-  if (!d.startDate) return { isDelayed: false, delayDays: 0 };
+  if (!d.startDate) return { delayDays: 0, isDelayed: false, level: 'normal', daysElapsed: 0 };
   
   const start = new Date(d.startDate);
   const today = new Date();
@@ -142,12 +145,24 @@ function calculateDealerTimeline(d) {
   const currentStage = d.currentStage || 'Interested';
   const targetDays = STAGE_TARGETS[currentStage] || 0;
   const delayDays = Math.max(0, daysElapsed - targetDays);
-  const isDelayed = delayDays > 3;
   
-  return { isDelayed, delayDays };
+  let level = 'normal';
+  if (delayDays >= DELAY_THRESHOLDS.CRITICAL) level = 'critical';
+  else if (delayDays >= DELAY_THRESHOLDS.WARNING) level = 'warning';
+  
+  return {
+    delayDays,
+    isDelayed: delayDays >= DELAY_THRESHOLDS.WARNING,
+    level,
+    daysElapsed
+  };
 }
 
-// Get formatted date in IST
+function isDropped(dealer) {
+  const f = dealer.flags || {};
+  return dealer.status === 'Dropped' || f.cftRejected === true || f.prospectBackout === true;
+}
+
 function getFormattedDate() {
   const now = new Date();
   const istOffset = 5.5 * 60 * 60 * 1000;
@@ -158,12 +173,10 @@ function getFormattedDate() {
   const day = String(istTime.getUTCDate()).padStart(2, '0');
   const hours = String(istTime.getUTCHours()).padStart(2, '0');
   const minutes = String(istTime.getUTCMinutes()).padStart(2, '0');
-  const seconds = String(istTime.getUTCSeconds()).padStart(2, '0');
   
-  return `${day}-${month}-${year} ${hours}:${minutes}:${seconds} IST`;
+  return `${day}-${month}-${year} ${hours}:${minutes} IST`;
 }
 
-// Check holiday
 function isHoliday() {
   const today = new Date();
   const day = today.getDay();
@@ -179,76 +192,68 @@ function isHoliday() {
   return false;
 }
 
-// Build HTML email
-// Build HTML email - BEAUTIFUL VERSION
+// FIXED: Build HTML with ACTUAL data (no hardcoded values)
 function buildHtmlReport(showrooms, dealers, dateStr) {
-  let totalShowrooms = showrooms.length;
-  let totalPct = 0;
-  let completedShowrooms = 0;
-  let activeDelayCount = 0;
-  let totalAvgDelay = 0;
+  // Calculate showroom stats
+  const totalShowrooms = showrooms.length;
+  let totalPct = 0, completedShowrooms = 0, activeDelayCount = 0;
+  let totalAvgDelay = 0, criticalShowrooms = 0;
   
   for (const showroom of showrooms) {
     const stats = calculateShowroomStats(showroom);
     totalPct += stats.pct;
     if (stats.pct === 100) completedShowrooms++;
-    if (stats.avgDelay > 0) {
+    if (stats.maxDelay > 0) {
       totalAvgDelay += stats.avgDelay;
       activeDelayCount++;
     }
+    if (stats.maxDelay >= DELAY_THRESHOLDS.CRITICAL) criticalShowrooms++;
   }
   
   const avgCompletion = totalShowrooms > 0 ? Math.round(totalPct / totalShowrooms) : 0;
   const globalAvgDelay = activeDelayCount > 0 ? Math.round(totalAvgDelay / activeDelayCount) : 0;
   
-  let totalDealers = dealers.length;
-  let activeDealers = 0;
-  let completedDealers = 0;
-  let delayedDealers = 0;
+  // Calculate dealer stats (FIXED: Match dashboard conversion logic)
+  const totalDealers = dealers.length;
+  const activeDealers = dealers.filter(d => !isDropped(d) && d.status === 'Active').length;
+  const completedDealers = dealers.filter(d => d.status === 'Completed').length;
+  const conversionBase = activeDealers + completedDealers;
+  const conversionRate = conversionBase > 0 ? Math.round((completedDealers / conversionBase) * 100) : 0;
   
+  let delayedDealers = 0, criticalDealers = 0;
   for (const dealer of dealers) {
-    if (dealer.status === 'Completed') {
-      completedDealers++;
-    } else if (!isDropped(dealer) && dealer.status === 'Active') {
-      activeDealers++;
-    }
-    
+    if (isDropped(dealer)) continue;
     const timeline = calculateDealerTimeline(dealer);
     if (timeline.isDelayed) delayedDealers++;
+    if (timeline.level === 'critical') criticalDealers++;
   }
   
-  let delayedMessage = '';
-  if (globalAvgDelay > 0 || delayedDealers > 0) {
-    delayedMessage = `⚠️ ${globalAvgDelay > 0 ? globalAvgDelay + ' showroomday(s)' : ''}${globalAvgDelay > 0 && delayedDealers > 0 ? ' and ' : ''}${delayedDealers > 0 ? delayedDealers + ' dealer(s)' : ''} are currently delayed. Please review the dashboard for details.`;
+  const totalDelayedProjects = activeDelayCount + delayedDealers;
+  const totalCritical = criticalShowrooms + criticalDealers;
+  
+  console.log(`📊 Showrooms: ${totalShowrooms} total, ${completedShowrooms} completed, Avg Delay: ${globalAvgDelay}d, Critical: ${criticalShowrooms}`);
+  console.log(`📊 Dealers: ${totalDealers} total, ${completedDealers} completed, Delayed: ${delayedDealers}, Critical: ${criticalDealers}, Conversion: ${conversionRate}%`);
+  
+  // FIXED: Dynamic urgency message
+  let urgencyMessage = '';
+  if (totalCritical > 0) {
+    urgencyMessage = `🚨 ${totalCritical} project${totalCritical > 1 ? 's' : ''} critically delayed (10+ days). Immediate escalation required.`;
+  } else if (totalDelayedProjects > 0) {
+    urgencyMessage = `⚠️ ${totalDelayedProjects} project${totalDelayedProjects > 1 ? 's' : ''} delayed. Review dashboard for details.`;
   } else {
-    delayedMessage = '✅ No delayed projects at this time. All showrooms and dealers are on track! 🎉';
+    urgencyMessage = '✅ All projects on track! No delayed showrooms or dealers.';
   }
-  
-  console.log(`📊 Showrooms: ${totalShowrooms} total, ${completedShowrooms} completed, Avg Delay: ${globalAvgDelay}`);
-  console.log(`📊 Dealers: ${totalDealers} total, ${completedDealers} completed, ${delayedDealers} delayed`);
   
   return `
 <!DOCTYPE html>
-<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <meta name="x-apple-disable-message-reformatting">
   <meta name="color-scheme" content="light only">
   <meta name="supported-color-schemes" content="light only">
   <title>AIS Command Center Report</title>
-
-  <!--[if mso]>
-  <xml>
-    <o:OfficeDocumentSettings>
-      <o:AllowPNG/>
-      <o:PixelsPerInch>96</o:PixelsPerInch>
-    </o:OfficeDocumentSettings>
-  </xml>
-  <![endif]-->
-
   <style>
-    /* Mobile stacking (works in most mobile email apps, ignored by Outlook desktop) */
     @media only screen and (max-width: 600px) {
       .container { width: 100% !important; }
       .stack { display:block !important; width:100% !important; }
@@ -260,172 +265,115 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
     }
   </style>
 </head>
-
-<body style="margin:0; padding:0; background-color:#f4f6f9; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; font-family:Segoe UI, Arial, sans-serif;">
-
-  <!-- OUTER BG -->
+<body style="margin:0; padding:0; background-color:#f4f6f9; font-family:Segoe UI, Arial, sans-serif;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f4f6f9" style="background-color:#f4f6f9;">
     <tr>
       <td align="center" class="p-outer" style="padding:20px;">
-
-        <!-- CONTAINER -->
-        <!--[if mso]>
-        <table role="presentation" width="700" cellspacing="0" cellpadding="0" border="0">
-          <tr><td>
-        <![endif]-->
-
         <table role="presentation" class="container" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:700px; background-color:#ffffff; border-radius:12px; overflow:hidden;">
           
-          <!-- HEADER (bgcolor ensures visible on system/Outlook) -->
+          <!-- HEADER -->
           <tr>
             <td align="center" bgcolor="#1a3a5c" style="background-color:#1a3a5c; padding:20px; border-radius:12px 12px 0 0;">
-              <div style="font-size:24px; line-height:30px; font-weight:700; color:#ffffff;">
-                📊 AIS Command Center
-              </div>
-              <div style="margin-top:6px; font-size:14px; line-height:18px; color:#a8c8e8;">
-                Daily Performance Report
-              </div>
+              <div style="font-size:24px; line-height:30px; font-weight:700; color:#ffffff;">📊 AIS Command Center</div>
+              <div style="margin-top:6px; font-size:14px; line-height:18px; color:#a8c8e8;">Daily Performance Report · ${dateStr}</div>
             </td>
           </tr>
 
-          <!-- TWO COLUMN ROW (Desktop) -->
+          <!-- TWO COLUMN ROW -->
           <tr>
             <td style="padding:16px;">
-
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                 <tr>
-
-                  <!-- LEFT COLUMN -->
+                  <!-- SHOWROOMS COLUMN -->
                   <td class="stack" width="50%" valign="top" style="padding:8px;">
                     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" style="background-color:#ffffff; border-radius:12px;">
                       <tr>
                         <td class="p-card" style="padding:16px; border:1px solid #eef1f5; border-radius:12px;">
-                          <div style="font-size:18px; line-height:22px; font-weight:700; color:#1a3a5c; margin:0 0 16px 0;">
-                            🏢 Showroom Performance
-                          </div>
-
+                          <div style="font-size:18px; line-height:22px; font-weight:700; color:#1a3a5c; margin:0 0 16px 0;">🏢 Showroom Performance</div>
                           <div style="text-align:center;">
-                            <div style="font-size:12px; letter-spacing:1px; text-transform:uppercase; color:#666666; line-height:16px;">
-                              TOTAL SHOWROOMS
-                            </div>
-                            <div class="num-main" style="font-size:48px; line-height:52px; font-weight:800; color:#111111; margin:6px 0 12px 0;">
-                              24
-                            </div>
+                            <div style="font-size:12px; letter-spacing:1px; text-transform:uppercase; color:#666666;">TOTAL SHOWROOMS</div>
+                            <div class="num-main" style="font-size:48px; line-height:52px; font-weight:800; color:#111111; margin:6px 0 12px 0;">${totalShowrooms}</div>
                           </div>
-
                           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                             <tr>
                               <td align="center" width="33.33%" style="padding:8px;">
                                 <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">COMPLETED</div>
-                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#28a745; margin-top:6px;">1</div>
+                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#28a745; margin-top:6px;">${completedShowrooms}</div>
                               </td>
                               <td align="center" width="33.33%" style="padding:8px;">
                                 <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">AVG COMPLETION</div>
-                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#ffc107; margin-top:6px;">28%</div>
+                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:${avgCompletion >= 70 ? '#28a745' : '#ffc107'}; margin-top:6px;">${avgCompletion}%</div>
                               </td>
                               <td align="center" width="33.33%" style="padding:8px;">
                                 <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">AVG DELAY</div>
-                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#dc3545; margin-top:6px; white-space:nowrap;">82 DAYS</div>
+                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:${globalAvgDelay > 0 ? '#dc3545' : '#28a745'}; margin-top:6px;">${globalAvgDelay} DAYS</div>
                               </td>
                             </tr>
                           </table>
-
                         </td>
                       </tr>
                     </table>
                   </td>
 
-                  <!-- RIGHT COLUMN -->
+                  <!-- DEALERS COLUMN -->
                   <td class="stack" width="50%" valign="top" style="padding:8px;">
                     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" style="background-color:#ffffff; border-radius:12px;">
                       <tr>
                         <td class="p-card" style="padding:16px; border:1px solid #eef1f5; border-radius:12px;">
-                          <div style="font-size:18px; line-height:22px; font-weight:700; color:#1a3a5c; margin:0 0 16px 0;">
-                            🚗 Dealer Onboarding
-                          </div>
-
+                          <div style="font-size:18px; line-height:22px; font-weight:700; color:#1a3a5c; margin:0 0 16px 0;">🚗 Dealer Onboarding</div>
                           <div style="text-align:center;">
-                            <div style="font-size:12px; letter-spacing:1px; text-transform:uppercase; color:#666666; line-height:16px;">
-                              TOTAL DEALERS
-                            </div>
-                            <div class="num-main" style="font-size:48px; line-height:52px; font-weight:800; color:#111111; margin:6px 0 12px 0;">
-                              15
-                            </div>
+                            <div style="font-size:12px; letter-spacing:1px; text-transform:uppercase; color:#666666;">TOTAL DEALERS</div>
+                            <div class="num-main" style="font-size:48px; line-height:52px; font-weight:800; color:#111111; margin:6px 0 12px 0;">${totalDealers}</div>
                           </div>
-
                           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                             <tr>
                               <td align="center" width="33.33%" style="padding:8px;">
                                 <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">ACTIVE</div>
-                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#28a745; margin-top:6px;">15</div>
+                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#28a745; margin-top:6px;">${activeDealers}</div>
                               </td>
                               <td align="center" width="33.33%" style="padding:8px;">
                                 <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">ONBOARDED</div>
-                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#666666; margin-top:6px;">0</div>
+                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#28a745; margin-top:6px;">${completedDealers}</div>
                               </td>
                               <td align="center" width="33.33%" style="padding:8px;">
-                                <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">DELAYED</div>
-                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#dc3545; margin-top:6px;">14</div>
+                                <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">CONVERSION</div>
+                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:${conversionRate >= 50 ? '#28a745' : '#ffc107'}; margin-top:6px;">${conversionRate}%</div>
                               </td>
                             </tr>
                           </table>
-
                         </td>
                       </tr>
                     </table>
                   </td>
-
                 </tr>
               </table>
-
             </td>
           </tr>
 
-          <!-- URGENT SECTION (bgcolor fixes the "white box" on system) -->
+          <!-- URGENT SECTION -->
           <tr>
             <td style="padding:0 16px 16px 16px;">
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#dc3545" style="background-color:#dc3545; border-radius:12px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="${totalCritical > 0 ? '#dc3545' : '#ffc107'}" style="background-color:${totalCritical > 0 ? '#dc3545' : '#ffc107'}; border-radius:12px;">
                 <tr>
                   <td align="center" style="padding:22px 18px; color:#ffffff;">
-
                     <div style="font-size:16px; line-height:20px; font-weight:800; letter-spacing:2px; text-transform:uppercase;">
-                      ⚠️ URGENT ACTION REQUIRED
+                      ${totalCritical > 0 ? '🚨 CRITICAL ACTION REQUIRED' : '⚠️ ATTENTION NEEDED'}
                     </div>
-
                     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:16px;">
                       <tr>
-
                         <td class="stack" width="50%" align="center" valign="top" style="padding:8px;">
-                          <div style="font-size:13px; line-height:16px; opacity:0.95;">
-                            DELAYED SHOWROOMS
-                          </div>
-                          <div class="num-big" style="font-size:64px; line-height:66px; font-weight:900; margin:6px 0; color:#ffffff;">
-                            82
-                          </div>
-                          <div style="font-size:14px; line-height:18px; font-weight:800; color:#ffffff;">
-                            DAYS
-                          </div>
+                          <div style="font-size:13px; line-height:16px; opacity:0.95;">DELAYED SHOWROOMS</div>
+                          <div class="num-big" style="font-size:64px; line-height:66px; font-weight:900; margin:6px 0; color:#ffffff;">${activeDelayCount}</div>
                         </td>
-
                         <td class="stack" width="50%" align="center" valign="top" style="padding:8px;">
-                          <div style="font-size:13px; line-height:16px; opacity:0.95;">
-                            DELAYED DEALERS
-                          </div>
-                          <div class="num-big" style="font-size:64px; line-height:66px; font-weight:900; margin:6px 0; color:#ffffff;">
-                            14
-                          </div>
-                          <div style="font-size:14px; line-height:18px; font-weight:800; color:#ffffff;">
-                            DEALERS
-                          </div>
+                          <div style="font-size:13px; line-height:16px; opacity:0.95;">DELAYED DEALERS</div>
+                          <div class="num-big" style="font-size:64px; line-height:66px; font-weight:900; margin:6px 0; color:#ffffff;">${delayedDealers}</div>
                         </td>
-
                       </tr>
                     </table>
-
                     <div style="margin-top:16px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.35); font-size:14px; line-height:18px; color:#ffffff;">
-                      ⚡ Please review the dashboard immediately and take corrective action
+                      ${urgencyMessage}
                     </div>
-
                   </td>
                 </tr>
               </table>
@@ -439,24 +387,15 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
               © 2024 AIS Windows | All Rights Reserved
             </td>
           </tr>
-
         </table>
-
-        <!--[if mso]>
-          </td></tr>
-        </table>
-        <![endif]-->
-
       </td>
     </tr>
   </table>
-
 </body>
 </html>
 `;
 }
 
-// Send email
 async function sendEmail(recipient, htmlBody, dateStr) {
   const templateParams = {
     to_email: recipient,
@@ -494,11 +433,10 @@ async function sendEmail(recipient, htmlBody, dateStr) {
   }
 }
 
-// Main function
 async function main() {
-  console.log('🚀 Starting dashboard email report...');
+  console.log('🚀 Starting AIS Command Center email report...');
   const dateStr = getFormattedDate();
-  console.log(`Time: ${dateStr}`);
+  console.log(`📅 Report Date: ${dateStr}`);
   
   if (!MANUAL_RECIPIENT && isHoliday()) {
     console.log('📅 Today is a holiday. Skipping automated email report.');
@@ -510,15 +448,14 @@ async function main() {
     process.exit(1);
   }
   
-  console.log('✅ EmailJS credentials found');
+  console.log('✅ EmailJS credentials verified');
+  console.log('📡 Fetching data from Firestore...');
   
-  console.log('📡 Fetching showrooms from Firestore...');
   const showrooms = await fetchCollection('showrooms');
-  console.log(`📡 Found ${showrooms.length} showrooms`);
+  console.log(`   └─ Showrooms: ${showrooms.length} found`);
   
-  console.log('📡 Fetching dealers from Firestore...');
   const dealers = await fetchCollection('dealerOnboarding');
-  console.log(`📡 Found ${dealers.length} dealers`);
+  console.log(`   └─ Dealers: ${dealers.length} found`);
   
   const htmlBody = buildHtmlReport(showrooms, dealers, dateStr);
   
@@ -526,18 +463,18 @@ async function main() {
     ? [MANUAL_RECIPIENT] 
     : DEFAULT_RECIPIENTS;
   
-  console.log(`📧 Sending to ${recipients.length} recipients`);
+  console.log(`📧 Sending to ${recipients.length} recipient(s)...`);
   
   let successCount = 0;
   for (const recipient of recipients) {
     const success = await sendEmail(recipient, htmlBody, dateStr);
     if (success) successCount++;
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 1500));
   }
   
-  console.log(`\n📬 Done: ${successCount}/${recipients.length} successful`);
+  console.log(`\n📬 Report complete: ${successCount}/${recipients.length} emails sent successfully`);
   if (successCount === 0) process.exit(1);
-  console.log('🎉 All emails sent successfully!');
+  console.log('🎉 Done!');
 }
 
-main().catch(err => { console.error('❌ Script error:', err); process.exit(1); });
+main().catch(err => { console.error('❌ Fatal error:', err); process.exit(1); });
