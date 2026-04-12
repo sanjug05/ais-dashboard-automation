@@ -1,4 +1,0 @@
-# In your project folder, create the file
-echo "service-account.json" > .gitignore
-echo "node_modules/" >> .gitignore
-echo ".env" >> .gitignore
