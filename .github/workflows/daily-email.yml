@@ -7,18 +7,18 @@ on:
 
 jobs:
   send-report:
-    runs-on: ubuntu-22.04  # Use older Ubuntu for better compatibility
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       
       - uses: actions/setup-node@v4
         with:
-          node-version: '18.17.0'  # Specific version known to work
+          node-version: '18.17.0'
       
       - name: Install dependencies
         run: |
-          npm install firebase-admin@11.11.1
-          npm install google-auth-library@8.9.0
+          npm init -y
+          npm install axios jsonwebtoken
       
       - name: Run report
         run: NODE_OPTIONS='--openssl-legacy-provider' FORCE_RUN=true node send-daily-email.js
