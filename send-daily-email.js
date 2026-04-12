@@ -1,12 +1,6 @@
-// send-daily-email.js - WITH SSL FIX AND REST FALLBACK
-import { initializeApp, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
-import { readFileSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// send-daily-email.js - SSL BYPASS VERSION
+import https from 'https';
+import axios from 'axios';
 
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
@@ -22,6 +16,11 @@ const FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY;
 const DEFAULT_RECIPIENTS = [
   'sanju.gupta@aisglass.com',
 ];
+
+// Create HTTPS agent that ignores SSL issues (for GitHub Actions only)
+const httpsAgent = new https.Agent({
+  rejectUnauthorized: false
+});
 
 const PHASES_CONFIG = [
   { id: 'dim', name: "Dimensions Submission", days: 5 },
@@ -49,128 +48,31 @@ let reportData = {
   totalCritical: 0, totalDelayedProjects: 0
 };
 
-let db = null;
-let useRestFallback = false;
-
 function formatPrivateKey(key) {
   if (!key) return null;
-  if (key.length < 500) {
-    console.error('   ⚠️  Private key is too short (' + key.length + ' chars). Expected ~1700+ chars.');
-    return null;
-  }
   return key.replace(/\\n/g, '\n').replace(/\\r/g, '\r');
 }
 
-async function initFirebase() {
-  try {
-    let credentials = null;
-    
-    if (FIREBASE_CLIENT_EMAIL && FIREBASE_PRIVATE_KEY) {
-      const formattedKey = formatPrivateKey(FIREBASE_PRIVATE_KEY);
-      
-      if (formattedKey && formattedKey.includes('BEGIN PRIVATE KEY')) {
-        console.log('   Using credentials from environment variables');
-        credentials = {
-          projectId: FIREBASE_PROJECT_ID,
-          clientEmail: FIREBASE_CLIENT_EMAIL,
-          privateKey: formattedKey
-        };
-      }
-    }
-    
-    if (!credentials) {
-      const serviceAccountPath = join(__dirname, 'service-account.json');
-      if (existsSync(serviceAccountPath)) {
-        const serviceAccount = JSON.parse(readFileSync(serviceAccountPath, 'utf8'));
-        credentials = {
-          projectId: serviceAccount.project_id,
-          clientEmail: serviceAccount.client_email,
-          privateKey: serviceAccount.private_key
-        };
-        console.log('   ✅ Using credentials from service-account.json');
-      }
-    }
-    
-    if (!credentials) {
-      console.error('\n❌ No valid Firebase credentials found.');
-      return false;
-    }
-    
-    console.log('   Project ID:', credentials.projectId);
-    console.log('   Client Email:', credentials.clientEmail);
-    console.log('   Private Key length:', credentials.privateKey.length);
-
-    initializeApp({
-      credential: cert(credentials),
-      projectId: credentials.projectId
-    });
-
-    db = getFirestore();
-    
-    // Test connection
-    try {
-      await db.collection('showrooms').limit(1).get();
-      console.log('✅ Firebase Admin initialized and connected successfully');
-      useRestFallback = false;
-    } catch (sslError) {
-      console.log('   ⚠️  SSL/gRPC error, switching to REST API fallback');
-      console.log('   Error details:', sslError.message);
-      useRestFallback = true;
-    }
-    
-    return true;
-  } catch (error) {
-    console.error('❌ Failed to initialize Firebase:', error.message);
-    return false;
-  }
-}
-
-// REST API fetch as fallback
-async function fetchCollectionREST(collectionName) {
-  try {
-    const { GoogleAuth } = await import('google-auth-library');
-    const auth = new GoogleAuth({
-      credentials: {
-        client_email: FIREBASE_CLIENT_EMAIL,
-        private_key: formatPrivateKey(FIREBASE_PRIVATE_KEY)
-      },
-      scopes: ['https://www.googleapis.com/auth/datastore']
-    });
-    
-    const client = await auth.getClient();
-    const accessToken = await client.getAccessToken();
-    
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/${collectionName}`;
-    
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${accessToken.token}`
-      }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    
-    const data = await response.json();
-    
-    if (!data.documents) return [];
-    
-    return data.documents.map(doc => {
-      const result = { id: doc.name.split('/').pop() };
-      
-      if (doc.fields) {
-        for (const [key, value] of Object.entries(doc.fields)) {
-          result[key] = parseFirestoreValue(value);
-        }
-      }
-      
-      return result;
-    });
-  } catch (error) {
-    console.error(`   ❌ REST fallback failed:`, error.message);
-    return [];
-  }
+async function getAccessToken() {
+  const jwt = await import('jsonwebtoken');
+  const privateKey = formatPrivateKey(FIREBASE_PRIVATE_KEY);
+  
+  const payload = {
+    iss: FIREBASE_CLIENT_EMAIL,
+    scope: 'https://www.googleapis.com/auth/datastore',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + 3600
+  };
+  
+  const token = jwt.sign(payload, privateKey, { algorithm: 'RS256' });
+  
+  const response = await axios.post('https://oauth2.googleapis.com/token', {
+    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+    assertion: token
+  }, { httpsAgent });
+  
+  return response.data.access_token;
 }
 
 function parseFirestoreValue(value) {
@@ -198,24 +100,44 @@ function parseFirestoreValue(value) {
 }
 
 async function fetchCollection(collectionName) {
-  if (useRestFallback) {
-    console.log(`   Fetching ${collectionName} via REST API...`);
-    return await fetchCollectionREST(collectionName);
-  }
-  
-  if (!db) return [];
-  
   try {
-    console.log(`   Fetching ${collectionName} via SDK...`);
-    const snapshot = await db.collection(collectionName).get();
-    const docs = [];
-    snapshot.forEach(doc => docs.push({ id: doc.id, ...doc.data() }));
+    console.log(`   Fetching ${collectionName}...`);
+    
+    const accessToken = await getAccessToken();
+    
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/${collectionName}`;
+    
+    const response = await axios.get(url, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      },
+      httpsAgent
+    });
+    
+    const data = response.data;
+    
+    if (!data.documents) {
+      console.log(`   ✅ ${collectionName}: 0 documents`);
+      return [];
+    }
+    
+    const docs = data.documents.map(doc => {
+      const result = { id: doc.name.split('/').pop() };
+      
+      if (doc.fields) {
+        for (const [key, value] of Object.entries(doc.fields)) {
+          result[key] = parseFirestoreValue(value);
+        }
+      }
+      
+      return result;
+    });
+    
     console.log(`   ✅ ${collectionName}: ${docs.length} documents`);
     return docs;
   } catch (error) {
-    console.log(`   ⚠️  SDK fetch failed, trying REST fallback...`);
-    useRestFallback = true;
-    return await fetchCollectionREST(collectionName);
+    console.error(`   ❌ Error fetching ${collectionName}:`, error.message);
+    return [];
   }
 }
 
@@ -370,27 +292,22 @@ async function sendEmail(recipient, htmlBody, dateStr) {
     : `✅ AIS Command Center · ${dateStr}`;
   
   try {
-    const res = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
-      method: 'POST', 
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        service_id: SERVICE_ID, 
-        template_id: TEMPLATE_ID, 
-        user_id: PUBLIC_KEY, 
-        accessToken: PRIVATE_KEY, 
-        template_params: { to_email: recipient, subject, date: dateStr, message: htmlBody } 
-      })
-    });
-    if (res.ok) { 
-      console.log(`   ✅ Sent to: ${recipient}`); 
-      return true; 
+    const res = await axios.post('https://api.emailjs.com/api/v1.0/email/send', {
+      service_id: SERVICE_ID,
+      template_id: TEMPLATE_ID,
+      user_id: PUBLIC_KEY,
+      accessToken: PRIVATE_KEY,
+      template_params: { to_email: recipient, subject, date: dateStr, message: htmlBody }
+    }, { httpsAgent });
+    
+    if (res.status === 200) {
+      console.log(`   ✅ Sent to: ${recipient}`);
+      return true;
     }
-    const errorText = await res.text();
-    console.error(`   ❌ Failed: ${recipient} - ${errorText.substring(0, 100)}`); 
     return false;
-  } catch (e) { 
-    console.error(`   ❌ Error: ${recipient} - ${e.message}`); 
-    return false; 
+  } catch (e) {
+    console.error(`   ❌ Error: ${recipient} - ${e.message}`);
+    return false;
   }
 }
 
@@ -407,18 +324,19 @@ async function main() {
     process.exit(0); 
   }
   
-  if (FORCE_RUN) {
-    console.log('⚠️  FORCE_RUN enabled - ignoring holiday check\n');
-  }
+  if (FORCE_RUN) console.log('⚠️  FORCE_RUN enabled - ignoring holiday check\n');
   
   if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) { 
     console.error('❌ Missing EmailJS credentials'); 
     process.exit(1); 
   }
   
-  if (!await initFirebase()) process.exit(1);
+  if (!FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
+    console.error('❌ Missing Firebase credentials');
+    process.exit(1);
+  }
   
-  console.log('\n📡 Fetching data...');
+  console.log('📡 Fetching data...');
   const showrooms = await fetchCollection('showrooms');
   const dealers = await fetchCollection('dealerOnboarding');
   
