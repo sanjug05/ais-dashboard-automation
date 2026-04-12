@@ -2,7 +2,7 @@ name: Daily Intelligence Report
 
 on:
   schedule:
-    - cron: '30 1 * * *'  # 7:00 AM IST
+    - cron: '30 1 * * *'
   workflow_dispatch:
 
 jobs:
@@ -11,12 +11,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
+      - name: Debug - List files
+        run: |
+          echo "=== Repository files ==="
+          ls -la
+          echo ""
+          echo "=== package.json content ==="
+          cat package.json
+      
       - uses: actions/setup-node@v4
         with:
           node-version: '18.17.0'
       
       - name: Install dependencies
-        run: npm install
+        run: |
+          npm install
+          echo ""
+          echo "=== node_modules contents ==="
+          ls -la node_modules | head -20
       
       - name: Run report
         run: NODE_OPTIONS='--openssl-legacy-provider' FORCE_RUN=true node send-daily-email.js
@@ -25,5 +37,5 @@ jobs:
           EMAILJS_TEMPLATE_ID: ${{ secrets.EMAILJS_TEMPLATE_ID }}
           EMAILJS_PUBLIC_KEY: ${{ secrets.EMAILJS_PUBLIC_KEY }}
           EMAILJS_PRIVATE_KEY: ${{ secrets.EMAILJS_PRIVATE_KEY }}
-          FIREBASE_CLIENT_EMAIL: ${{ secrets.FIREBASE_CLIENT_EMAIL }}
+          FIREBASE_CLIENT_EMAIL: ${{ secrets.EMAILJS_CLIENT_EMAIL }}
           FIREBASE_PRIVATE_KEY: ${{ secrets.FIREBASE_PRIVATE_KEY }}
