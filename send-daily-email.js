@@ -1,5 +1,5 @@
-// send-daily-email.js - WITH OPENSSL LEGACY PROVIDER FIX
-const crypto = require('crypto');
+// send-daily-email.js - GOOGLE SHEETS VERSION
+// No Firebase, no crypto - just HTTP requests!
 
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
@@ -7,14 +7,11 @@ const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
 const PRIVATE_KEY_EMAILJS = process.env.EMAILJS_PRIVATE_KEY;
 const MANUAL_RECIPIENT = process.env.MANUAL_RECIPIENT;
 const FORCE_RUN = process.env.FORCE_RUN === 'true';
-
-const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'ais-showroom-dashboard';
-const FIREBASE_CLIENT_EMAIL = process.env.FIREBASE_CLIENT_EMAIL;
-const FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY;
+const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL;
 
 const DEFAULT_RECIPIENTS = [
   'sanju.gupta@aisglass.com',
-  ];
+];
 
 const PHASES_CONFIG = [
   { id: 'dim', name: "Dimensions Submission", days: 5 },
@@ -42,146 +39,23 @@ let reportData = {
   totalCritical: 0, totalDelayedProjects: 0
 };
 
-function formatPrivateKey(key) {
-  if (!key) return '';
-  // Handle both escaped and unescaped newlines
-  return key.replace(/\\n/g, '\n');
-}
-
-function base64UrlEncode(str) {
-  return Buffer.from(str)
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
-}
-
-function createJWT() {
-  const privateKey = formatPrivateKey(FIREBASE_PRIVATE_KEY);
-  
-  const header = { alg: 'RS256', typ: 'JWT' };
-  const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    iss: FIREBASE_CLIENT_EMAIL,
-    scope: 'https://www.googleapis.com/auth/datastore',
-    aud: 'https://oauth2.googleapis.com/token',
-    iat: now,
-    exp: now + 3600
-  };
-  
-  const encodedHeader = base64UrlEncode(JSON.stringify(header));
-  const encodedPayload = base64UrlEncode(JSON.stringify(payload));
-  const signatureInput = `${encodedHeader}.${encodedPayload}`;
-  
-  // Use crypto.sign with try-catch for better error handling
+async function fetchDataFromGoogleSheets() {
   try {
-    const sign = crypto.createSign('RSA-SHA256');
-    sign.update(signatureInput);
-    sign.end();
-    const signature = sign.sign(privateKey, 'base64')
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=/g, '');
-    
-    return `${signatureInput}.${signature}`;
-  } catch (e) {
-    console.error('   JWT signing error:', e.message);
-    throw e;
-  }
-}
-
-async function getAccessToken() {
-  try {
-    const jwt = createJWT();
-    
-    const response = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`
-    });
-    
+    console.log('   Fetching from Google Apps Script...');
+    const response = await fetch(GOOGLE_SCRIPT_URL);
     const data = await response.json();
     
-    if (data.error) {
-      console.error('   Token error:', data.error, data.error_description || '');
-      return null;
-    }
+    console.log(`   ✅ Showrooms: ${data.showroomCount} documents`);
+    console.log(`   ✅ Dealers: ${data.dealerCount} documents`);
+    console.log(`   Last updated: ${data.lastUpdated}`);
     
-    return data.access_token;
-  } catch (e) {
-    console.error('   getAccessToken error:', e.message);
-    return null;
-  }
-}
-
-function parseFirestoreValue(value) {
-  if (value === undefined || value === null) return null;
-  if (value.stringValue !== undefined) return value.stringValue;
-  if (value.integerValue !== undefined) return parseInt(value.integerValue);
-  if (value.doubleValue !== undefined) return parseFloat(value.doubleValue);
-  if (value.booleanValue !== undefined) return value.booleanValue;
-  if (value.nullValue !== undefined) return null;
-  if (value.timestampValue !== undefined) return value.timestampValue;
-  
-  if (value.mapValue && value.mapValue.fields) {
-    const obj = {};
-    for (const [key, val] of Object.entries(value.mapValue.fields)) {
-      obj[key] = parseFirestoreValue(val);
-    }
-    return obj;
-  }
-  
-  if (value.arrayValue && value.arrayValue.values) {
-    return value.arrayValue.values.map(v => parseFirestoreValue(v));
-  }
-  
-  return null;
-}
-
-async function fetchCollection(collectionName) {
-  try {
-    console.log(`   Fetching ${collectionName}...`);
-    
-    const accessToken = await getAccessToken();
-    if (!accessToken) {
-      console.error(`   ❌ Failed to get access token`);
-      return [];
-    }
-    
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/${collectionName}`;
-    
-    const response = await fetch(url, {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`   ❌ HTTP ${response.status}: ${errorText.substring(0, 200)}`);
-      return [];
-    }
-    
-    const data = await response.json();
-    
-    if (!data.documents) {
-      console.log(`   ✅ ${collectionName}: 0 documents`);
-      return [];
-    }
-    
-    const docs = data.documents.map(doc => {
-      const result = { id: doc.name.split('/').pop() };
-      if (doc.fields) {
-        for (const [key, value] of Object.entries(doc.fields)) {
-          result[key] = parseFirestoreValue(value);
-        }
-      }
-      return result;
-    });
-    
-    console.log(`   ✅ ${collectionName}: ${docs.length} documents`);
-    return docs;
+    return {
+      showrooms: data.showrooms || [],
+      dealers: data.dealers || []
+    };
   } catch (error) {
-    console.error(`   ❌ Error: ${error.message}`);
-    return [];
+    console.error('   ❌ Failed to fetch from Google Sheets:', error.message);
+    return { showrooms: [], dealers: [] };
   }
 }
 
@@ -348,12 +222,10 @@ async function main() {
   if (!FORCE_RUN && !MANUAL_RECIPIENT && isHoliday()) { console.log('📅 Holiday. Skipping.\n'); process.exit(0); }
   if (FORCE_RUN) console.log('⚠️  FORCE_RUN enabled\n');
   
-  if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY_EMAILJS) { console.error('❌ Missing EmailJS credentials'); process.exit(1); }
-  if (!FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) { console.error('❌ Missing Firebase credentials'); process.exit(1); }
+  if (!GOOGLE_SCRIPT_URL) { console.error('❌ Missing GOOGLE_SCRIPT_URL'); process.exit(1); }
   
-  console.log('📡 Fetching data via REST API...');
-  const showrooms = await fetchCollection('showrooms');
-  const dealers = await fetchCollection('dealerOnboarding');
+  console.log('📡 Fetching data from Google Sheets...');
+  const { showrooms, dealers } = await fetchDataFromGoogleSheets();
   
   calculateReportData(showrooms, dealers);
   const htmlBody = buildHtmlReport(dateStr);
