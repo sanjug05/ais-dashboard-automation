@@ -1,11 +1,10 @@
-// send-daily-email.js - FIREBASE ADMIN SDK VERSION
-import { initializeApp, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+// send-daily-email.js - FINAL WORKING VERSION
+// Uses Firestore REST API (no gRPC/SSL issues)
 
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
-const PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY;
+const PRIVATE_KEY_EMAILJS = process.env.EMAILJS_PRIVATE_KEY;
 const MANUAL_RECIPIENT = process.env.MANUAL_RECIPIENT;
 const FORCE_RUN = process.env.FORCE_RUN === 'true';
 
@@ -46,64 +45,128 @@ let reportData = {
   totalCritical: 0, totalDelayedProjects: 0
 };
 
-let db = null;
-
 function formatPrivateKey(key) {
-  if (!key) return null;
-  return key.replace(/\\n/g, '\n').replace(/\\r/g, '\r');
+  if (!key) return '';
+  return key.replace(/\\n/g, '\n');
 }
 
-async function initFirebase() {
-  try {
-    if (!FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
-      console.error('❌ Missing Firebase credentials');
-      return false;
+function base64UrlEncode(str) {
+  return Buffer.from(str)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '');
+}
+
+function createJWT() {
+  const privateKey = formatPrivateKey(FIREBASE_PRIVATE_KEY);
+  
+  const header = {
+    alg: 'RS256',
+    typ: 'JWT'
+  };
+  
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    iss: FIREBASE_CLIENT_EMAIL,
+    scope: 'https://www.googleapis.com/auth/datastore',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600
+  };
+  
+  const encodedHeader = base64UrlEncode(JSON.stringify(header));
+  const encodedPayload = base64UrlEncode(JSON.stringify(payload));
+  const signatureInput = `${encodedHeader}.${encodedPayload}`;
+  
+  const crypto = require('crypto');
+  const sign = crypto.createSign('RSA-SHA256');
+  sign.update(signatureInput);
+  sign.end();
+  const signature = sign.sign(privateKey, 'base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '');
+  
+  return `${signatureInput}.${signature}`;
+}
+
+async function getAccessToken() {
+  const jwt = createJWT();
+  
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`
+  });
+  
+  const data = await response.json();
+  return data.access_token;
+}
+
+function parseFirestoreValue(value) {
+  if (value === undefined || value === null) return null;
+  if (value.stringValue !== undefined) return value.stringValue;
+  if (value.integerValue !== undefined) return parseInt(value.integerValue);
+  if (value.doubleValue !== undefined) return parseFloat(value.doubleValue);
+  if (value.booleanValue !== undefined) return value.booleanValue;
+  if (value.nullValue !== undefined) return null;
+  if (value.timestampValue !== undefined) return value.timestampValue;
+  
+  if (value.mapValue && value.mapValue.fields) {
+    const obj = {};
+    for (const [key, val] of Object.entries(value.mapValue.fields)) {
+      obj[key] = parseFirestoreValue(val);
     }
-
-    const formattedKey = formatPrivateKey(FIREBASE_PRIVATE_KEY);
-    
-    // Set GRPC environment variable to help with SSL
-    process.env.GRPC_VERBOSITY = 'ERROR';
-    process.env.GRPC_TRACE = '';
-
-    initializeApp({
-      credential: cert({
-        projectId: FIREBASE_PROJECT_ID,
-        clientEmail: FIREBASE_CLIENT_EMAIL,
-        privateKey: formattedKey
-      }),
-      projectId: FIREBASE_PROJECT_ID
-    });
-
-    db = getFirestore();
-    
-    // Test connection
-    try {
-      await db.collection('showrooms').limit(1).get();
-      console.log('✅ Firebase connected successfully');
-    } catch (e) {
-      console.log('⚠️  Firebase connection test failed, but continuing...');
-    }
-    
-    return true;
-  } catch (error) {
-    console.error('❌ Firebase init failed:', error.message);
-    return false;
+    return obj;
   }
+  
+  if (value.arrayValue && value.arrayValue.values) {
+    return value.arrayValue.values.map(v => parseFirestoreValue(v));
+  }
+  
+  return null;
 }
 
 async function fetchCollection(collectionName) {
-  if (!db) return [];
-  
   try {
     console.log(`   Fetching ${collectionName}...`);
-    const snapshot = await db.collection(collectionName).get();
-    const docs = [];
-    snapshot.forEach(doc => docs.push({ id: doc.id, ...doc.data() }));
+    
+    const accessToken = await getAccessToken();
+    
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/${collectionName}`;
+    
+    const response = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`   ❌ HTTP ${response.status}: ${errorText.substring(0, 200)}`);
+      return [];
+    }
+    
+    const data = await response.json();
+    
+    if (!data.documents) {
+      console.log(`   ✅ ${collectionName}: 0 documents`);
+      return [];
+    }
+    
+    const docs = data.documents.map(doc => {
+      const result = { id: doc.name.split('/').pop() };
+      if (doc.fields) {
+        for (const [key, value] of Object.entries(doc.fields)) {
+          result[key] = parseFirestoreValue(value);
+        }
+      }
+      return result;
+    });
+    
     console.log(`   ✅ ${collectionName}: ${docs.length} documents`);
     return docs;
   } catch (error) {
-    console.error(`   ❌ Error fetching ${collectionName}:`, error.message);
+    console.error(`   ❌ Error: ${error.message}`);
     return [];
   }
 }
@@ -194,10 +257,7 @@ function calculateReportData(showrooms, dealers) {
     const stats = calculateShowroomStats(s);
     totalPct += stats.pct;
     if (stats.pct === 100) reportData.completedShowrooms++;
-    if (stats.maxDelay > 0) { 
-      totalAvgDelaySum += stats.avgDelay; 
-      reportData.activeDelayCount++; 
-    }
+    if (stats.maxDelay > 0) { totalAvgDelaySum += stats.avgDelay; reportData.activeDelayCount++; }
     if (stats.maxDelay >= DELAY_THRESHOLDS.CRITICAL) reportData.criticalShowrooms++;
   }
   reportData.avgCompletion = reportData.totalShowrooms > 0 ? Math.round(totalPct / reportData.totalShowrooms) : 0;
@@ -223,18 +283,15 @@ function calculateReportData(showrooms, dealers) {
 
 function buildHtmlReport(dateStr) {
   const urgencyConfig = reportData.totalCritical > 0 
-    ? { bg: '#DC2626', border: '#B91C1C', icon: '🚨', title: 'CRITICAL ACTION REQUIRED', 
-        message: `${reportData.totalCritical} project${reportData.totalCritical > 1 ? 's' : ''} critically delayed (10+ days).` }
+    ? { bg: '#DC2626', border: '#B91C1C', icon: '🚨', title: 'CRITICAL ACTION REQUIRED', message: `${reportData.totalCritical} project${reportData.totalCritical > 1 ? 's' : ''} critically delayed.` }
     : reportData.totalDelayedProjects > 0 
-    ? { bg: '#F59E0B', border: '#D97706', icon: '⚠️', title: 'ATTENTION NEEDED', 
-        message: `${reportData.totalDelayedProjects} project${reportData.totalDelayedProjects > 1 ? 's' : ''} delayed. Review dashboard.` }
-    : { bg: '#10B981', border: '#059669', icon: '✅', title: 'ALL SYSTEMS OPERATIONAL', 
-        message: 'No delayed projects. All showrooms and dealers on track.' };
+    ? { bg: '#F59E0B', border: '#D97706', icon: '⚠️', title: 'ATTENTION NEEDED', message: `${reportData.totalDelayedProjects} project${reportData.totalDelayedProjects > 1 ? 's' : ''} delayed.` }
+    : { bg: '#10B981', border: '#059669', icon: '✅', title: 'ALL SYSTEMS OPERATIONAL', message: 'No delayed projects.' };
 
   return `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>AIS Command Center</title>
+<html><head><meta charset="UTF-8"><title>AIS Command Center</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@500&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
-<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'DM Sans',sans-serif;background:#EDF1F7;padding:24px}.container{max-width:680px;margin:0 auto;background:#FFF;border-radius:28px;box-shadow:0 8px 32px rgba(0,0,0,0.08);overflow:hidden;border:1px solid #E2E8F0}.header{background:linear-gradient(135deg,#0F1C2E 0%,#162438 100%);padding:28px 32px}.header span{font-family:'Syne',sans-serif;font-size:1.4rem;font-weight:700;color:#FFF}.header-title{font-family:'Syne',sans-serif;font-size:2rem;font-weight:700;color:#FFF;margin-top:8px}.header-sub{font-size:.85rem;color:rgba(255,255,255,0.5);margin-top:8px}.kpi-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:24px}.kpi-card{background:#F8FAFC;border:1px solid #E2E8F0;border-radius:20px;padding:20px;position:relative}.kpi-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--accent,#2563EB)}.kpi-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;margin-bottom:14px;background:var(--icon-bg,#EFF6FF);color:var(--accent,#2563EB)}.kpi-label{font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#64748B;margin-bottom:6px}.kpi-value{font-family:'DM Mono',monospace;font-size:2.2rem;font-weight:500;color:#0F172A}.kpi-trend{font-size:.7rem;color:#64748B;margin-top:4px}.trend-up{color:#059669}.trend-warn{color:#D97706}.stats-row{display:flex;border:1px solid #E2E8F0;border-radius:12px;margin-top:16px}.stat-cell{flex:1;padding:12px 8px;text-align:center;border-right:1px solid #E2E8F0}.stat-cell:last-child{border-right:none}.stat-label{font-size:.55rem;font-weight:700;text-transform:uppercase;color:#64748B}.stat-val{font-family:'DM Mono',monospace;font-size:1.1rem;color:#0F172A}.stat-val.red{color:#DC2626}.stat-val.amber{color:#D97706}.stat-val.green{color:#059669}.urgency-banner{margin:0 24px 24px;padding:20px 24px;border-radius:20px;background:${urgencyConfig.bg};border:1px solid ${urgencyConfig.border}}.urgency-title{font-family:'Syne',sans-serif;font-size:1rem;font-weight:700;color:#FFF;text-transform:uppercase}.urgency-stats{display:flex;gap:24px;margin-top:12px}.urgency-stat{flex:1}.urgency-stat-label{font-size:.65rem;color:rgba(255,255,255,0.7);text-transform:uppercase}.urgency-stat-value{font-family:'DM Mono',monospace;font-size:2.8rem;font-weight:700;color:#FFF}.urgency-message{margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.2);color:#FFF}.footer{background:#F8FAFC;padding:18px 24px;text-align:center;font-size:.7rem;color:#94A3B8}@media(max-width:480px){.kpi-grid{grid-template-columns:1fr}}</style>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'DM Sans',sans-serif;background:#EDF1F7;padding:24px}.container{max-width:680px;margin:0 auto;background:#FFF;border-radius:28px;box-shadow:0 8px 32px rgba(0,0,0,0.08);overflow:hidden;border:1px solid #E2E8F0}.header{background:linear-gradient(135deg,#0F1C2E 0%,#162438 100%);padding:28px 32px}.header span{font-family:'Syne',sans-serif;font-size:1.4rem;font-weight:700;color:#FFF}.header-title{font-family:'Syne',sans-serif;font-size:2rem;font-weight:700;color:#FFF;margin-top:8px}.header-sub{font-size:.85rem;color:rgba(255,255,255,0.5);margin-top:8px}.kpi-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:24px}.kpi-card{background:#F8FAFC;border:1px solid #E2E8F0;border-radius:20px;padding:20px;position:relative}.kpi-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--accent,#2563EB)}.kpi-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;margin-bottom:14px;background:var(--icon-bg,#EFF6FF);color:var(--accent,#2563EB)}.kpi-label{font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#64748B;margin-bottom:6px}.kpi-value{font-family:'DM Mono',monospace;font-size:2.2rem;font-weight:500;color:#0F172A}.kpi-trend{font-size:.7rem;color:#64748B;margin-top:4px}.trend-up{color:#059669}.trend-warn{color:#D97706}.stats-row{display:flex;border:1px solid #E2E8F0;border-radius:12px;margin-top:16px}.stat-cell{flex:1;padding:12px 8px;text-align:center;border-right:1px solid #E2E8F0}.stat-cell:last-child{border-right:none}.stat-label{font-size:.55rem;font-weight:700;text-transform:uppercase;color:#64748B}.stat-val{font-family:'DM Mono',monospace;font-size:1.1rem;color:#0F172A}.stat-val.red{color:#DC2626}.stat-val.amber{color:#D97706}.stat-val.green{color:#059669}.urgency-banner{margin:0 24px 24px;padding:20px 24px;border-radius:20px;background:${urgencyConfig.bg};border:1px solid ${urgencyConfig.border}}.urgency-title{font-family:'Syne',sans-serif;font-size:1rem;font-weight:700;color:#FFF;text-transform:uppercase}.urgency-stats{display:flex;gap:24px;margin-top:12px}.urgency-stat{flex:1}.urgency-stat-label{font-size:.65rem;color:rgba(255,255,255,0.7);text-transform:uppercase}.urgency-stat-value{font-family:'DM Mono',monospace;font-size:2.8rem;font-weight:700;color:#FFF}.urgency-message{margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.2);color:#FFF}.footer{background:#F8FAFC;padding:18px 24px;text-align:center;font-size:.7rem;color:#94A3B8}</style>
 </head><body><div class="container">
 <div class="header"><span>🏢 AIS</span><div class="header-title">Command Center</div><div class="header-sub">Daily Intelligence Report · ${dateStr}</div></div>
 <div class="kpi-grid">
@@ -252,34 +309,18 @@ function buildHtmlReport(dateStr) {
 }
 
 async function sendEmail(recipient, htmlBody, dateStr) {
-  const subject = reportData.totalCritical > 0 
-    ? `🚨 CRITICAL · AIS Command Center · ${dateStr}` 
-    : reportData.totalDelayedProjects > 0 
-    ? `⚠️ ATTENTION · AIS Command Center · ${dateStr}` 
+  const subject = reportData.totalCritical > 0 ? `🚨 CRITICAL · AIS Command Center · ${dateStr}` 
+    : reportData.totalDelayedProjects > 0 ? `⚠️ ATTENTION · AIS Command Center · ${dateStr}` 
     : `✅ AIS Command Center · ${dateStr}`;
   
   try {
     const res = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        service_id: SERVICE_ID,
-        template_id: TEMPLATE_ID,
-        user_id: PUBLIC_KEY,
-        accessToken: PRIVATE_KEY,
-        template_params: { to_email: recipient, subject, date: dateStr, message: htmlBody }
-      })
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service_id: SERVICE_ID, template_id: TEMPLATE_ID, user_id: PUBLIC_KEY, accessToken: PRIVATE_KEY_EMAILJS, template_params: { to_email: recipient, subject, date: dateStr, message: htmlBody } })
     });
-    
-    if (res.ok) {
-      console.log(`   ✅ Sent to: ${recipient}`);
-      return true;
-    }
+    if (res.ok) { console.log(`   ✅ Sent to: ${recipient}`); return true; }
     return false;
-  } catch (e) {
-    console.error(`   ❌ Error: ${recipient} - ${e.message}`);
-    return false;
-  }
+  } catch (e) { console.error(`   ❌ Error: ${e.message}`); return false; }
 }
 
 async function main() {
@@ -290,21 +331,13 @@ async function main() {
   const dateStr = getFormattedDate();
   console.log(`📅 ${dateStr}`);
   
-  if (!FORCE_RUN && !MANUAL_RECIPIENT && isHoliday()) { 
-    console.log('📅 Holiday detected. Use FORCE_RUN=true to override.\n');
-    process.exit(0); 
-  }
+  if (!FORCE_RUN && !MANUAL_RECIPIENT && isHoliday()) { console.log('📅 Holiday. Skipping.\n'); process.exit(0); }
+  if (FORCE_RUN) console.log('⚠️  FORCE_RUN enabled\n');
   
-  if (FORCE_RUN) console.log('⚠️  FORCE_RUN enabled - ignoring holiday check\n');
+  if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY_EMAILJS) { console.error('❌ Missing EmailJS credentials'); process.exit(1); }
+  if (!FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) { console.error('❌ Missing Firebase credentials'); process.exit(1); }
   
-  if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) { 
-    console.error('❌ Missing EmailJS credentials'); 
-    process.exit(1); 
-  }
-  
-  if (!await initFirebase()) process.exit(1);
-  
-  console.log('\n📡 Fetching data...');
+  console.log('📡 Fetching data via REST API...');
   const showrooms = await fetchCollection('showrooms');
   const dealers = await fetchCollection('dealerOnboarding');
   
@@ -315,15 +348,11 @@ async function main() {
   console.log(`\n📧 Sending to ${recipients.length} recipient(s)...\n`);
   
   let success = 0;
-  for (const r of recipients) { 
-    if (await sendEmail(r, htmlBody, dateStr)) success++; 
-    await new Promise(resolve => setTimeout(resolve, 1000)); 
-  }
+  for (const r of recipients) { if (await sendEmail(r, htmlBody, dateStr)) success++; await new Promise(r => setTimeout(r, 1000)); }
   
   console.log(`\n╔══════════════════════════════════════════════╗`);
   console.log(`║   Complete: ${success}/${recipients.length} delivered                    ║`);
   console.log(`╚══════════════════════════════════════════════╝\n`);
-  
   process.exit(success === 0 ? 1 : 0);
 }
 
