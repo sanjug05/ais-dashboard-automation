@@ -2,7 +2,7 @@ name: Daily Intelligence Report
 
 on:
   schedule:
-    - cron: '30 1 * * *'
+    - cron: '30 1 * * *'  # 7:00 AM IST
   workflow_dispatch:
 
 jobs:
@@ -16,9 +16,7 @@ jobs:
           node-version: '18.17.0'
       
       - name: Install dependencies
-        run: |
-          npm init -y
-          npm install axios jsonwebtoken
+        run: npm install
       
       - name: Run report
         run: NODE_OPTIONS='--openssl-legacy-provider' FORCE_RUN=true node send-daily-email.js
