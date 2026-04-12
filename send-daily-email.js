@@ -1,4 +1,4 @@
-// send-daily-email.js - WITH FALLBACK TO SERVICE ACCOUNT FILE
+// send-daily-email.js - WITH SSL FIX AND REST FALLBACK
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { readFileSync, existsSync } from 'fs';
@@ -21,9 +21,6 @@ const FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY;
 
 const DEFAULT_RECIPIENTS = [
   'sanju.gupta@aisglass.com',
-  'mayank.tomar@aisglass.com',
-  'krishna.verma@aisglass.com',
-  'nidhi.tiwari@aisglass.com'
 ];
 
 const PHASES_CONFIG = [
@@ -53,18 +50,14 @@ let reportData = {
 };
 
 let db = null;
+let useRestFallback = false;
 
 function formatPrivateKey(key) {
   if (!key) return null;
-  
-  // If key is too short, it's probably malformed
   if (key.length < 500) {
     console.error('   ⚠️  Private key is too short (' + key.length + ' chars). Expected ~1700+ chars.');
-    console.error('   The key may have been truncated when pasting.');
     return null;
   }
-  
-  // Handle various escaped formats
   return key.replace(/\\n/g, '\n').replace(/\\r/g, '\r');
 }
 
@@ -72,7 +65,6 @@ async function initFirebase() {
   try {
     let credentials = null;
     
-    // Option 1: Try environment variables
     if (FIREBASE_CLIENT_EMAIL && FIREBASE_PRIVATE_KEY) {
       const formattedKey = formatPrivateKey(FIREBASE_PRIVATE_KEY);
       
@@ -83,38 +75,24 @@ async function initFirebase() {
           clientEmail: FIREBASE_CLIENT_EMAIL,
           privateKey: formattedKey
         };
-      } else {
-        console.log('   ⚠️  Environment variable key appears malformed');
       }
     }
     
-    // Option 2: Fallback to service-account.json file (local development only)
     if (!credentials) {
       const serviceAccountPath = join(__dirname, 'service-account.json');
-      console.log('   Trying fallback to:', serviceAccountPath);
-      
       if (existsSync(serviceAccountPath)) {
-        try {
-          const serviceAccount = JSON.parse(readFileSync(serviceAccountPath, 'utf8'));
-          credentials = {
-            projectId: serviceAccount.project_id,
-            clientEmail: serviceAccount.client_email,
-            privateKey: serviceAccount.private_key
-          };
-          console.log('   ✅ Using credentials from service-account.json');
-        } catch (e) {
-          console.error('   ❌ Failed to parse service-account.json:', e.message);
-        }
-      } else {
-        console.log('   ⚠️  service-account.json not found');
+        const serviceAccount = JSON.parse(readFileSync(serviceAccountPath, 'utf8'));
+        credentials = {
+          projectId: serviceAccount.project_id,
+          clientEmail: serviceAccount.client_email,
+          privateKey: serviceAccount.private_key
+        };
+        console.log('   ✅ Using credentials from service-account.json');
       }
     }
     
     if (!credentials) {
       console.error('\n❌ No valid Firebase credentials found.');
-      console.log('\n📋 To fix this:');
-      console.log('Option 1 (Production): Set FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY in environment');
-      console.log('Option 2 (Local): Place service-account.json in the project directory\n');
       return false;
     }
     
@@ -128,26 +106,116 @@ async function initFirebase() {
     });
 
     db = getFirestore();
-    console.log('✅ Firebase Admin initialized successfully');
+    
+    // Test connection
+    try {
+      await db.collection('showrooms').limit(1).get();
+      console.log('✅ Firebase Admin initialized and connected successfully');
+      useRestFallback = false;
+    } catch (sslError) {
+      console.log('   ⚠️  SSL/gRPC error, switching to REST API fallback');
+      console.log('   Error details:', sslError.message);
+      useRestFallback = true;
+    }
+    
     return true;
   } catch (error) {
-    console.error('❌ Failed to initialize Firebase Admin:', error.message);
+    console.error('❌ Failed to initialize Firebase:', error.message);
     return false;
   }
 }
 
-async function fetchCollection(collectionName) {
-  if (!db) return [];
+// REST API fetch as fallback
+async function fetchCollectionREST(collectionName) {
   try {
-    console.log(`   Fetching ${collectionName}...`);
+    const { GoogleAuth } = await import('google-auth-library');
+    const auth = new GoogleAuth({
+      credentials: {
+        client_email: FIREBASE_CLIENT_EMAIL,
+        private_key: formatPrivateKey(FIREBASE_PRIVATE_KEY)
+      },
+      scopes: ['https://www.googleapis.com/auth/datastore']
+    });
+    
+    const client = await auth.getClient();
+    const accessToken = await client.getAccessToken();
+    
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/${collectionName}`;
+    
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${accessToken.token}`
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    if (!data.documents) return [];
+    
+    return data.documents.map(doc => {
+      const result = { id: doc.name.split('/').pop() };
+      
+      if (doc.fields) {
+        for (const [key, value] of Object.entries(doc.fields)) {
+          result[key] = parseFirestoreValue(value);
+        }
+      }
+      
+      return result;
+    });
+  } catch (error) {
+    console.error(`   ❌ REST fallback failed:`, error.message);
+    return [];
+  }
+}
+
+function parseFirestoreValue(value) {
+  if (value === undefined || value === null) return null;
+  if (value.stringValue !== undefined) return value.stringValue;
+  if (value.integerValue !== undefined) return parseInt(value.integerValue);
+  if (value.doubleValue !== undefined) return parseFloat(value.doubleValue);
+  if (value.booleanValue !== undefined) return value.booleanValue;
+  if (value.nullValue !== undefined) return null;
+  if (value.timestampValue !== undefined) return value.timestampValue;
+  
+  if (value.mapValue && value.mapValue.fields) {
+    const obj = {};
+    for (const [key, val] of Object.entries(value.mapValue.fields)) {
+      obj[key] = parseFirestoreValue(val);
+    }
+    return obj;
+  }
+  
+  if (value.arrayValue && value.arrayValue.values) {
+    return value.arrayValue.values.map(v => parseFirestoreValue(v));
+  }
+  
+  return null;
+}
+
+async function fetchCollection(collectionName) {
+  if (useRestFallback) {
+    console.log(`   Fetching ${collectionName} via REST API...`);
+    return await fetchCollectionREST(collectionName);
+  }
+  
+  if (!db) return [];
+  
+  try {
+    console.log(`   Fetching ${collectionName} via SDK...`);
     const snapshot = await db.collection(collectionName).get();
     const docs = [];
     snapshot.forEach(doc => docs.push({ id: doc.id, ...doc.data() }));
     console.log(`   ✅ ${collectionName}: ${docs.length} documents`);
     return docs;
   } catch (error) {
-    console.error(`   ❌ Error fetching ${collectionName}:`, error.message);
-    return [];
+    console.log(`   ⚠️  SDK fetch failed, trying REST fallback...`);
+    useRestFallback = true;
+    return await fetchCollectionREST(collectionName);
   }
 }
 
@@ -353,10 +421,6 @@ async function main() {
   console.log('\n📡 Fetching data...');
   const showrooms = await fetchCollection('showrooms');
   const dealers = await fetchCollection('dealerOnboarding');
-  
-  if (showrooms.length === 0 && dealers.length === 0) {
-    console.log('\n⚠️  No data found in Firestore. Check your database.');
-  }
   
   calculateReportData(showrooms, dealers);
   const htmlBody = buildHtmlReport(dateStr);
