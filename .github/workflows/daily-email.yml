@@ -1,7 +1,7 @@
 name: Daily Intelligence Report
 on:
   schedule:
-    - cron: '02 * * *'  # 7:00 AM IST
+    - cron: '30 1 * * *'  # 7:00 AM IST
   workflow_dispatch:
 
 jobs:
