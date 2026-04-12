@@ -1,11 +1,12 @@
-// send-daily-email.js - PREMIUM ENTERPRISE VERSION
-// Fully tested with dashboard data structure
-
+// send-daily-email.js - AUTHENTICATED VERSION
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
 const PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY;
 const MANUAL_RECIPIENT = process.env.MANUAL_RECIPIENT;
+
+// Add Firebase API Key for authenticated REST calls
+const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || 'AIzaSyDav3rI7fTr8KrXYxvnz5LB82CgjRq4v20';
 
 const DEFAULT_RECIPIENTS = [
   'sanju.gupta@aisglass.com',
@@ -29,8 +30,6 @@ const PHASES_CONFIG = [
   { id: 'launch',   name: "Final Handover / Launch",   days: 90 }
 ];
 
-const DEALER_STAGES = ['Interested', 'Shortlisted', 'CFT Selected', 'Documentation', 'Onboarded'];
-
 const STAGE_TARGETS = {
   'Interested': 0,
   'Shortlisted': 3,
@@ -44,7 +43,24 @@ const DELAY_THRESHOLDS = {
   CRITICAL: 10
 };
 
-// FIXED: Properly parse Firestore REST API response
+// Global variables for report data (fixes scoping issue)
+let reportData = {
+  totalShowrooms: 0,
+  completedShowrooms: 0,
+  activeDelayCount: 0,
+  criticalShowrooms: 0,
+  avgCompletion: 0,
+  globalAvgDelay: 0,
+  totalDealers: 0,
+  activeDealers: 0,
+  completedDealers: 0,
+  delayedDealers: 0,
+  criticalDealers: 0,
+  conversionRate: 0,
+  totalCritical: 0,
+  totalDelayedProjects: 0
+};
+
 function parseFirestoreValue(value) {
   if (value === undefined || value === null) return null;
   
@@ -70,9 +86,21 @@ function parseFirestoreValue(value) {
   return null;
 }
 
+// FIXED: Add authentication to Firestore REST calls
 async function fetchCollection(collectionName) {
   try {
-    const response = await fetch(`${FIRESTORE_URL}/${collectionName}`);
+    // Firestore REST API requires authentication via query parameter
+    const url = `${FIRESTORE_URL}/${collectionName}?key=${FIREBASE_API_KEY}`;
+    
+    console.log(`   Fetching: ${collectionName}...`);
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`   ❌ HTTP ${response.status}: ${errorText.substring(0, 200)}`);
+      return [];
+    }
+    
     const data = await response.json();
     
     if (!data.documents) {
@@ -80,7 +108,7 @@ async function fetchCollection(collectionName) {
       return [];
     }
     
-    return data.documents.map(doc => {
+    const docs = data.documents.map(doc => {
       const result = { id: doc.name.split('/').pop() };
       
       if (doc.fields) {
@@ -91,13 +119,15 @@ async function fetchCollection(collectionName) {
       
       return result;
     });
+    
+    console.log(`   ✅ ${collectionName}: ${docs.length} documents`);
+    return docs;
   } catch (error) {
-    console.error(`❌ Error fetching ${collectionName}:`, error.message);
+    console.error(`   ❌ Error fetching ${collectionName}:`, error.message);
     return [];
   }
 }
 
-// FIXED: Calculate stats with proper data access
 function calculateShowroomStats(s) {
   if (!s || !s.startDate) {
     return { pct: 0, avgDelay: 0, totalDelay: 0, maxDelay: 0, completedPhases: 0 };
@@ -117,8 +147,7 @@ function calculateShowroomStats(s) {
     const target = new Date(start);
     target.setDate(start.getDate() + p.days);
     
-    // FIXED: Properly access nested data field
-    const phaseData = s.data && s.data[p.id] ? s.data[p.id] : {};
+    const phaseData = (s.data && s.data[p.id]) ? s.data[p.id] : {};
     const actualDate = phaseData.actualDate || null;
 
     if (actualDate) {
@@ -209,56 +238,57 @@ function isHoliday() {
   return false;
 }
 
-// PREMIUM EMAIL TEMPLATE - Matches dashboard design system
-function buildHtmlReport(showrooms, dealers, dateStr) {
-  // Calculate showroom stats
-  const totalShowrooms = showrooms.length;
-  let totalPct = 0, completedShowrooms = 0, activeDelayCount = 0;
-  let totalAvgDelay = 0, criticalShowrooms = 0;
+// FIXED: Calculate and store in global reportData
+function calculateReportData(showrooms, dealers) {
+  // Showroom stats
+  reportData.totalShowrooms = showrooms.length;
+  let totalPct = 0;
   
   for (const showroom of showrooms) {
     const stats = calculateShowroomStats(showroom);
     totalPct += stats.pct;
-    if (stats.pct === 100) completedShowrooms++;
+    if (stats.pct === 100) reportData.completedShowrooms++;
     if (stats.maxDelay > 0) {
-      totalAvgDelay += stats.avgDelay;
-      activeDelayCount++;
+      reportData.globalAvgDelay += stats.avgDelay;
+      reportData.activeDelayCount++;
     }
-    if (stats.maxDelay >= DELAY_THRESHOLDS.CRITICAL) criticalShowrooms++;
+    if (stats.maxDelay >= DELAY_THRESHOLDS.CRITICAL) reportData.criticalShowrooms++;
   }
   
-  const avgCompletion = totalShowrooms > 0 ? Math.round(totalPct / totalShowrooms) : 0;
-  const globalAvgDelay = activeDelayCount > 0 ? Math.round(totalAvgDelay / activeDelayCount) : 0;
+  reportData.avgCompletion = reportData.totalShowrooms > 0 ? Math.round(totalPct / reportData.totalShowrooms) : 0;
+  reportData.globalAvgDelay = reportData.activeDelayCount > 0 ? Math.round(reportData.globalAvgDelay / reportData.activeDelayCount) : 0;
   
-  // Calculate dealer stats
-  const totalDealers = dealers.length;
-  const activeDealers = dealers.filter(d => !isDropped(d) && d.status === 'Active').length;
-  const completedDealers = dealers.filter(d => d.status === 'Completed').length;
-  const conversionBase = activeDealers + completedDealers;
-  const conversionRate = conversionBase > 0 ? Math.round((completedDealers / conversionBase) * 100) : 0;
+  // Dealer stats
+  reportData.totalDealers = dealers.length;
   
-  let delayedDealers = 0, criticalDealers = 0;
   for (const dealer of dealers) {
     if (isDropped(dealer)) continue;
+    
+    if (dealer.status === 'Active') reportData.activeDealers++;
+    if (dealer.status === 'Completed') reportData.completedDealers++;
+    
     const timeline = calculateDealerTimeline(dealer);
-    if (timeline.isDelayed) delayedDealers++;
-    if (timeline.level === 'critical') criticalDealers++;
+    if (timeline.isDelayed) reportData.delayedDealers++;
+    if (timeline.level === 'critical') reportData.criticalDealers++;
   }
   
-  const totalDelayedProjects = activeDelayCount + delayedDealers;
-  const totalCritical = criticalShowrooms + criticalDealers;
+  const conversionBase = reportData.activeDealers + reportData.completedDealers;
+  reportData.conversionRate = conversionBase > 0 ? Math.round((reportData.completedDealers / conversionBase) * 100) : 0;
   
-  // Debug output
+  reportData.totalDelayedProjects = reportData.activeDelayCount + reportData.delayedDealers;
+  reportData.totalCritical = reportData.criticalShowrooms + reportData.criticalDealers;
+  
   console.log(`\n📊 REPORT SUMMARY:`);
-  console.log(`   Showrooms: ${totalShowrooms} total | ${completedShowrooms} completed | ${activeDelayCount} delayed | ${criticalShowrooms} critical`);
-  console.log(`   Dealers:   ${totalDealers} total | ${activeDealers} active | ${completedDealers} completed | ${delayedDealers} delayed | ${criticalDealers} critical`);
-  console.log(`   Metrics:   ${avgCompletion}% avg completion | ${globalAvgDelay}d avg delay | ${conversionRate}% conversion\n`);
-  
-  // Dynamic urgency configuration
-  const urgencyConfig = totalCritical > 0 
-    ? { bg: '#DC2626', border: '#B91C1C', icon: '🚨', title: 'CRITICAL ACTION REQUIRED', message: `${totalCritical} project${totalCritical > 1 ? 's' : ''} critically delayed (10+ days). Immediate escalation required.` }
-    : totalDelayedProjects > 0 
-    ? { bg: '#F59E0B', border: '#D97706', icon: '⚠️', title: 'ATTENTION NEEDED', message: `${totalDelayedProjects} project${totalDelayedProjects > 1 ? 's' : ''} delayed. Review dashboard for details.` }
+  console.log(`   Showrooms: ${reportData.totalShowrooms} total | ${reportData.completedShowrooms} completed | ${reportData.activeDelayCount} delayed | ${reportData.criticalShowrooms} critical`);
+  console.log(`   Dealers:   ${reportData.totalDealers} total | ${reportData.activeDealers} active | ${reportData.completedDealers} completed | ${reportData.delayedDealers} delayed | ${reportData.criticalDealers} critical`);
+  console.log(`   Metrics:   ${reportData.avgCompletion}% avg completion | ${reportData.globalAvgDelay}d avg delay | ${reportData.conversionRate}% conversion\n`);
+}
+
+function buildHtmlReport(dateStr) {
+  const urgencyConfig = reportData.totalCritical > 0 
+    ? { bg: '#DC2626', border: '#B91C1C', icon: '🚨', title: 'CRITICAL ACTION REQUIRED', message: `${reportData.totalCritical} project${reportData.totalCritical > 1 ? 's' : ''} critically delayed (10+ days). Immediate escalation required.` }
+    : reportData.totalDelayedProjects > 0 
+    ? { bg: '#F59E0B', border: '#D97706', icon: '⚠️', title: 'ATTENTION NEEDED', message: `${reportData.totalDelayedProjects} project${reportData.totalDelayedProjects > 1 ? 's' : ''} delayed. Review dashboard for details.` }
     : { bg: '#10B981', border: '#059669', icon: '✅', title: 'ALL SYSTEMS OPERATIONAL', message: 'No delayed projects. All showrooms and dealers on track.' };
   
   return `<!DOCTYPE html>
@@ -286,8 +316,6 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
       overflow: hidden;
       border: 1px solid #E2E8F0;
     }
-    
-    /* Header */
     .header {
       background: linear-gradient(135deg, #0F1C2E 0%, #162438 100%);
       padding: 28px 32px;
@@ -322,11 +350,6 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
       align-items: center;
       gap: 12px;
     }
-    .header-sub i {
-      opacity: 0.4;
-    }
-    
-    /* KPI Grid */
     .kpi-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -389,8 +412,6 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
     .trend-up { color: #059669; }
     .trend-warn { color: #D97706; }
     .trend-critical { color: #DC2626; }
-    
-    /* Stats row inside cards */
     .stats-row {
       display: flex;
       border: 1px solid #E2E8F0;
@@ -422,8 +443,6 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
     .stat-val.red { color: #DC2626; }
     .stat-val.amber { color: #D97706; }
     .stat-val.green { color: #059669; }
-    
-    /* Urgency Banner */
     .urgency-banner {
       margin: 0 24px 24px;
       padding: 20px 24px;
@@ -473,8 +492,6 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
       color: #FFFFFF;
       font-weight: 500;
     }
-    
-    /* Footer */
     .footer {
       background: #F8FAFC;
       padding: 18px 24px;
@@ -484,7 +501,6 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
       border-top: 1px solid #E2E8F0;
     }
     .footer strong { color: #2563EB; font-weight: 700; }
-    
     @media (max-width: 480px) {
       body { padding: 12px; }
       .kpi-grid { grid-template-columns: 1fr; padding: 16px; }
@@ -496,8 +512,6 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
 </head>
 <body>
   <div class="container">
-    
-    <!-- HEADER -->
     <div class="header">
       <div class="header-logo">
         <span>🏢 AIS</span>
@@ -509,61 +523,52 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
         <span>${dateStr}</span>
       </div>
     </div>
-    
-    <!-- KPI GRID -->
     <div class="kpi-grid">
-      
-      <!-- SHOWROOM CARD -->
       <div class="kpi-card" style="--accent: #2563EB; --icon-bg: #EFF6FF;">
         <div class="kpi-icon">🏗️</div>
         <div class="kpi-label">Showroom Execution</div>
-        <div class="kpi-value">${totalShowrooms}</div>
-        <div class="kpi-trend ${avgCompletion >= 70 ? 'trend-up' : 'trend-warn'}">
-          ${avgCompletion >= 70 ? '▲' : '▼'} ${avgCompletion}% completion
+        <div class="kpi-value">${reportData.totalShowrooms}</div>
+        <div class="kpi-trend ${reportData.avgCompletion >= 70 ? 'trend-up' : 'trend-warn'}">
+          ${reportData.avgCompletion >= 70 ? '▲' : '▼'} ${reportData.avgCompletion}% completion
         </div>
         <div class="stats-row">
           <div class="stat-cell">
             <div class="stat-label">Completed</div>
-            <div class="stat-val green">${completedShowrooms}</div>
+            <div class="stat-val green">${reportData.completedShowrooms}</div>
           </div>
           <div class="stat-cell">
             <div class="stat-label">Delayed</div>
-            <div class="stat-val ${activeDelayCount > 0 ? 'red' : ''}">${activeDelayCount}</div>
+            <div class="stat-val ${reportData.activeDelayCount > 0 ? 'red' : ''}">${reportData.activeDelayCount}</div>
           </div>
           <div class="stat-cell">
             <div class="stat-label">Avg Delay</div>
-            <div class="stat-val ${globalAvgDelay > 0 ? 'amber' : 'green'}">${globalAvgDelay}d</div>
+            <div class="stat-val ${reportData.globalAvgDelay > 0 ? 'amber' : 'green'}">${reportData.globalAvgDelay}d</div>
           </div>
         </div>
       </div>
-      
-      <!-- DEALER CARD -->
       <div class="kpi-card" style="--accent: #8B5CF6; --icon-bg: #EDE9FE;">
         <div class="kpi-icon">🚗</div>
         <div class="kpi-label">Dealer Onboarding</div>
-        <div class="kpi-value">${totalDealers}</div>
-        <div class="kpi-trend ${conversionRate >= 50 ? 'trend-up' : 'trend-warn'}">
-          ${conversionRate}% conversion rate
+        <div class="kpi-value">${reportData.totalDealers}</div>
+        <div class="kpi-trend ${reportData.conversionRate >= 50 ? 'trend-up' : 'trend-warn'}">
+          ${reportData.conversionRate}% conversion rate
         </div>
         <div class="stats-row">
           <div class="stat-cell">
             <div class="stat-label">Active</div>
-            <div class="stat-val">${activeDealers}</div>
+            <div class="stat-val">${reportData.activeDealers}</div>
           </div>
           <div class="stat-cell">
             <div class="stat-label">Onboarded</div>
-            <div class="stat-val green">${completedDealers}</div>
+            <div class="stat-val green">${reportData.completedDealers}</div>
           </div>
           <div class="stat-cell">
             <div class="stat-label">Delayed</div>
-            <div class="stat-val ${delayedDealers > 0 ? 'red' : ''}">${delayedDealers}</div>
+            <div class="stat-val ${reportData.delayedDealers > 0 ? 'red' : ''}">${reportData.delayedDealers}</div>
           </div>
         </div>
       </div>
-      
     </div>
-    
-    <!-- URGENCY BANNER -->
     <div class="urgency-banner">
       <div class="urgency-title">
         ${urgencyConfig.icon} ${urgencyConfig.title}
@@ -571,33 +576,37 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
       <div class="urgency-stats">
         <div class="urgency-stat">
           <div class="urgency-stat-label">Delayed Showrooms</div>
-          <div class="urgency-stat-value">${activeDelayCount}</div>
+          <div class="urgency-stat-value">${reportData.activeDelayCount}</div>
         </div>
         <div class="urgency-stat">
           <div class="urgency-stat-label">Delayed Dealers</div>
-          <div class="urgency-stat-value">${delayedDealers}</div>
+          <div class="urgency-stat-value">${reportData.delayedDealers}</div>
         </div>
       </div>
       <div class="urgency-message">
         ${urgencyConfig.message}
       </div>
     </div>
-    
-    <!-- FOOTER -->
     <div class="footer">
       Powered with ❤️ by <strong>Sanju G</strong> · AIS Windows Command Center v2.2<br>
       This is an automated intelligence report. Data refreshes continuously.
     </div>
-    
   </div>
 </body>
 </html>`;
 }
 
+// FIXED: Use reportData instead of undefined variables
 async function sendEmail(recipient, htmlBody, dateStr) {
+  const subject = reportData.totalCritical > 0 
+    ? `🚨 CRITICAL · AIS Command Center · ${dateStr}`
+    : reportData.totalDelayedProjects > 0
+    ? `⚠️ ATTENTION · AIS Command Center · ${dateStr}`
+    : `✅ AIS Command Center · ${dateStr}`;
+  
   const templateParams = {
     to_email: recipient,
-    subject: `${totalCritical > 0 ? '🚨' : '📊'} AIS Command Center · ${dateStr}`,
+    subject: subject,
     date: dateStr,
     message: htmlBody
   };
@@ -650,22 +659,32 @@ async function main() {
   console.log('\n📡 Fetching Firestore data...');
   
   const showrooms = await fetchCollection('showrooms');
-  console.log(`   └─ Showrooms: ${showrooms.length} documents`);
-  
-  // Debug: Show first showroom structure
-  if (showrooms.length > 0) {
-    console.log(`   └─ Sample: ${showrooms[0].name} (${showrooms[0].city}) - has data: ${!!showrooms[0].data}`);
-  }
-  
   const dealers = await fetchCollection('dealerOnboarding');
-  console.log(`   └─ Dealers: ${dealers.length} documents`);
   
-  // Debug: Show first dealer structure
-  if (dealers.length > 0) {
-    console.log(`   └─ Sample: ${dealers[0].name} (${dealers[0].currentStage}) - status: ${dealers[0].status}`);
+  // Debug: Show sample data if available
+  if (showrooms.length > 0) {
+    console.log(`\n📋 Sample Showroom:`);
+    console.log(`   Name: ${showrooms[0].name}`);
+    console.log(`   City: ${showrooms[0].city}`);
+    console.log(`   Start Date: ${showrooms[0].startDate}`);
+    console.log(`   Has data field: ${!!showrooms[0].data}`);
+    if (showrooms[0].data) {
+      console.log(`   Phase keys: ${Object.keys(showrooms[0].data).join(', ')}`);
+    }
   }
   
-  const htmlBody = buildHtmlReport(showrooms, dealers, dateStr);
+  if (dealers.length > 0) {
+    console.log(`\n📋 Sample Dealer:`);
+    console.log(`   Name: ${dealers[0].name}`);
+    console.log(`   Status: ${dealers[0].status}`);
+    console.log(`   Stage: ${dealers[0].currentStage}`);
+    console.log(`   Start Date: ${dealers[0].startDate}`);
+  }
+  
+  // Calculate all report data
+  calculateReportData(showrooms, dealers);
+  
+  const htmlBody = buildHtmlReport(dateStr);
   
   let recipients = MANUAL_RECIPIENT && MANUAL_RECIPIENT.trim() 
     ? [MANUAL_RECIPIENT] 
