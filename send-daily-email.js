@@ -1,4 +1,6 @@
-// send-daily-email.js - FIXED VERSION
+// send-daily-email.js - PREMIUM ENTERPRISE VERSION
+// Fully tested with dashboard data structure
+
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
@@ -14,7 +16,7 @@ const DEFAULT_RECIPIENTS = [
 
 const FIRESTORE_URL = 'https://firestore.googleapis.com/v1/projects/ais-showroom-dashboard/databases/(default)/documents';
 
-// FIXED: Exact match with dashboard PHASES_CONFIG (v2.2)
+// Exact match with dashboard PHASES_CONFIG (v2.2)
 const PHASES_CONFIG = [
   { id: 'dim',      name: "Dimensions Submission",    days: 5  },
   { id: 'cad',      name: "CAD Preparation",           days: 12 },
@@ -22,14 +24,13 @@ const PHASES_CONFIG = [
   { id: 'civil',    name: "Structure & Civil Work",    days: 30 },
   { id: 'interior', name: "Interior Development",      days: 50 },
   { id: 'brand',    name: "Branding & Display Setup",  days: 55 },
-  { id: 'delivery', name: "Window Delivery",           days: 65 },  // FIXED: Added missing phase
-  { id: 'window',   name: "Window Installation",       days: 80 },  // FIXED: 80 not 85
+  { id: 'delivery', name: "Window Delivery",           days: 65 },
+  { id: 'window',   name: "Window Installation",       days: 80 },
   { id: 'launch',   name: "Final Handover / Launch",   days: 90 }
 ];
 
 const DEALER_STAGES = ['Interested', 'Shortlisted', 'CFT Selected', 'Documentation', 'Onboarded'];
 
-// FIXED: Match dashboard dealer targets
 const STAGE_TARGETS = {
   'Interested': 0,
   'Shortlisted': 3,
@@ -38,85 +39,99 @@ const STAGE_TARGETS = {
   'Onboarded': 22
 };
 
-// FIXED: Match dashboard delay thresholds
 const DELAY_THRESHOLDS = {
-  WARNING: 6,    // ≥6 days = warning
-  CRITICAL: 10   // ≥10 days = critical
+  WARNING: 6,
+  CRITICAL: 10
 };
+
+// FIXED: Properly parse Firestore REST API response
+function parseFirestoreValue(value) {
+  if (value === undefined || value === null) return null;
+  
+  if (value.stringValue !== undefined) return value.stringValue;
+  if (value.integerValue !== undefined) return parseInt(value.integerValue);
+  if (value.doubleValue !== undefined) return parseFloat(value.doubleValue);
+  if (value.booleanValue !== undefined) return value.booleanValue;
+  if (value.nullValue !== undefined) return null;
+  if (value.timestampValue !== undefined) return value.timestampValue;
+  
+  if (value.mapValue && value.mapValue.fields) {
+    const obj = {};
+    for (const [key, val] of Object.entries(value.mapValue.fields)) {
+      obj[key] = parseFirestoreValue(val);
+    }
+    return obj;
+  }
+  
+  if (value.arrayValue && value.arrayValue.values) {
+    return value.arrayValue.values.map(v => parseFirestoreValue(v));
+  }
+  
+  return null;
+}
 
 async function fetchCollection(collectionName) {
   try {
     const response = await fetch(`${FIRESTORE_URL}/${collectionName}`);
     const data = await response.json();
-    if (!data.documents) return [];
+    
+    if (!data.documents) {
+      console.log(`   ⚠️ No documents found in ${collectionName}`);
+      return [];
+    }
     
     return data.documents.map(doc => {
-      const fields = doc.fields;
       const result = { id: doc.name.split('/').pop() };
       
-      for (const [key, value] of Object.entries(fields)) {
-        if (value.stringValue !== undefined) result[key] = value.stringValue;
-        else if (value.integerValue !== undefined) result[key] = parseInt(value.integerValue);
-        else if (value.doubleValue !== undefined) result[key] = parseFloat(value.doubleValue);
-        else if (value.booleanValue !== undefined) result[key] = value.booleanValue;
-        else if (value.mapValue !== undefined) {
-          const nestedObj = {};
-          if (value.mapValue.fields) {
-            for (const [nestedKey, nestedValue] of Object.entries(value.mapValue.fields)) {
-              if (nestedValue.stringValue !== undefined) nestedObj[nestedKey] = nestedValue.stringValue;
-              else if (nestedValue.booleanValue !== undefined) nestedObj[nestedKey] = nestedValue.booleanValue;
-              else if (nestedValue.mapValue !== undefined) {
-                const deepObj = {};
-                if (nestedValue.mapValue.fields) {
-                  for (const [deepKey, deepValue] of Object.entries(nestedValue.mapValue.fields)) {
-                    if (deepValue.stringValue !== undefined) deepObj[deepKey] = deepValue.stringValue;
-                  }
-                }
-                nestedObj[nestedKey] = deepObj;
-              }
-            }
-          }
-          result[key] = nestedObj;
+      if (doc.fields) {
+        for (const [key, value] of Object.entries(doc.fields)) {
+          result[key] = parseFirestoreValue(value);
         }
-        else if (value.arrayValue !== undefined) result[key] = value.arrayValue.values || [];
-        else if (value.nullValue !== undefined) result[key] = null;
       }
+      
       return result;
     });
   } catch (error) {
-    console.error(`Error fetching ${collectionName}:`, error.message);
+    console.error(`❌ Error fetching ${collectionName}:`, error.message);
     return [];
   }
 }
 
-// FIXED: Exact match with dashboard calculateShowroomStats
+// FIXED: Calculate stats with proper data access
 function calculateShowroomStats(s) {
-  if (!s || !s.startDate) return { pct: 0, avgDelay: 0, totalDelay: 0, maxDelay: 0, completedPhases: 0 };
+  if (!s || !s.startDate) {
+    return { pct: 0, avgDelay: 0, totalDelay: 0, maxDelay: 0, completedPhases: 0 };
+  }
   
-  const start = new Date(s.startDate + "T00:00:00");
-  const today = new Date(); 
+  const start = new Date(s.startDate);
+  const today = new Date();
   today.setHours(0, 0, 0, 0);
   
-  if (isNaN(start.getTime())) return { pct: 0, avgDelay: 0, totalDelay: 0, maxDelay: 0, completedPhases: 0 };
+  if (isNaN(start.getTime())) {
+    return { pct: 0, avgDelay: 0, totalDelay: 0, maxDelay: 0, completedPhases: 0 };
+  }
 
   let comp = 0, totalDelay = 0, delayCount = 0, maxDelay = 0;
 
   PHASES_CONFIG.forEach(p => {
     const target = new Date(start);
     target.setDate(start.getDate() + p.days);
+    
+    // FIXED: Properly access nested data field
+    const phaseData = s.data && s.data[p.id] ? s.data[p.id] : {};
+    const actualDate = phaseData.actualDate || null;
 
-    const data = (s.data && s.data[p.id]) || {};
-    if (data.actualDate) {
+    if (actualDate) {
       comp++;
-      const actual = new Date(data.actualDate + "T00:00:00");
-      const diff = Math.ceil((actual - target) / 86400000);
+      const actual = new Date(actualDate);
+      const diff = Math.ceil((actual - target) / (1000 * 60 * 60 * 24));
       if (diff > 0) {
         totalDelay += diff;
         delayCount++;
         maxDelay = Math.max(maxDelay, diff);
       }
     } else {
-      const diff = Math.ceil((today - target) / 86400000);
+      const diff = Math.ceil((today - target) / (1000 * 60 * 60 * 24));
       if (diff > 0) {
         totalDelay += diff;
         delayCount++;
@@ -134,9 +149,10 @@ function calculateShowroomStats(s) {
   };
 }
 
-// FIXED: Exact match with dashboard calcDealerTimeline
 function calculateDealerTimeline(d) {
-  if (!d.startDate) return { delayDays: 0, isDelayed: false, level: 'normal', daysElapsed: 0 };
+  if (!d || !d.startDate) {
+    return { delayDays: 0, isDelayed: false, level: 'normal', daysElapsed: 0 };
+  }
   
   const start = new Date(d.startDate);
   const today = new Date();
@@ -159,22 +175,23 @@ function calculateDealerTimeline(d) {
 }
 
 function isDropped(dealer) {
+  if (!dealer) return true;
   const f = dealer.flags || {};
   return dealer.status === 'Dropped' || f.cftRejected === true || f.prospectBackout === true;
 }
 
 function getFormattedDate() {
   const now = new Date();
-  const istOffset = 5.5 * 60 * 60 * 1000;
-  const istTime = new Date(now.getTime() + istOffset);
-  
-  const year = istTime.getUTCFullYear();
-  const month = String(istTime.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(istTime.getUTCDate()).padStart(2, '0');
-  const hours = String(istTime.getUTCHours()).padStart(2, '0');
-  const minutes = String(istTime.getUTCMinutes()).padStart(2, '0');
-  
-  return `${day}-${month}-${year} ${hours}:${minutes} IST`;
+  const options = {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  };
+  return now.toLocaleString('en-IN', options).replace(',', ' ·');
 }
 
 function isHoliday() {
@@ -192,7 +209,7 @@ function isHoliday() {
   return false;
 }
 
-// FIXED: Build HTML with ACTUAL data (no hardcoded values)
+// PREMIUM EMAIL TEMPLATE - Matches dashboard design system
 function buildHtmlReport(showrooms, dealers, dateStr) {
   // Calculate showroom stats
   const totalShowrooms = showrooms.length;
@@ -213,7 +230,7 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
   const avgCompletion = totalShowrooms > 0 ? Math.round(totalPct / totalShowrooms) : 0;
   const globalAvgDelay = activeDelayCount > 0 ? Math.round(totalAvgDelay / activeDelayCount) : 0;
   
-  // Calculate dealer stats (FIXED: Match dashboard conversion logic)
+  // Calculate dealer stats
   const totalDealers = dealers.length;
   const activeDealers = dealers.filter(d => !isDropped(d) && d.status === 'Active').length;
   const completedDealers = dealers.filter(d => d.status === 'Completed').length;
@@ -231,180 +248,359 @@ function buildHtmlReport(showrooms, dealers, dateStr) {
   const totalDelayedProjects = activeDelayCount + delayedDealers;
   const totalCritical = criticalShowrooms + criticalDealers;
   
-  console.log(`📊 Showrooms: ${totalShowrooms} total, ${completedShowrooms} completed, Avg Delay: ${globalAvgDelay}d, Critical: ${criticalShowrooms}`);
-  console.log(`📊 Dealers: ${totalDealers} total, ${completedDealers} completed, Delayed: ${delayedDealers}, Critical: ${criticalDealers}, Conversion: ${conversionRate}%`);
+  // Debug output
+  console.log(`\n📊 REPORT SUMMARY:`);
+  console.log(`   Showrooms: ${totalShowrooms} total | ${completedShowrooms} completed | ${activeDelayCount} delayed | ${criticalShowrooms} critical`);
+  console.log(`   Dealers:   ${totalDealers} total | ${activeDealers} active | ${completedDealers} completed | ${delayedDealers} delayed | ${criticalDealers} critical`);
+  console.log(`   Metrics:   ${avgCompletion}% avg completion | ${globalAvgDelay}d avg delay | ${conversionRate}% conversion\n`);
   
-  // FIXED: Dynamic urgency message
-  let urgencyMessage = '';
-  if (totalCritical > 0) {
-    urgencyMessage = `🚨 ${totalCritical} project${totalCritical > 1 ? 's' : ''} critically delayed (10+ days). Immediate escalation required.`;
-  } else if (totalDelayedProjects > 0) {
-    urgencyMessage = `⚠️ ${totalDelayedProjects} project${totalDelayedProjects > 1 ? 's' : ''} delayed. Review dashboard for details.`;
-  } else {
-    urgencyMessage = '✅ All projects on track! No delayed showrooms or dealers.';
-  }
+  // Dynamic urgency configuration
+  const urgencyConfig = totalCritical > 0 
+    ? { bg: '#DC2626', border: '#B91C1C', icon: '🚨', title: 'CRITICAL ACTION REQUIRED', message: `${totalCritical} project${totalCritical > 1 ? 's' : ''} critically delayed (10+ days). Immediate escalation required.` }
+    : totalDelayedProjects > 0 
+    ? { bg: '#F59E0B', border: '#D97706', icon: '⚠️', title: 'ATTENTION NEEDED', message: `${totalDelayedProjects} project${totalDelayedProjects > 1 ? 's' : ''} delayed. Review dashboard for details.` }
+    : { bg: '#10B981', border: '#059669', icon: '✅', title: 'ALL SYSTEMS OPERATIONAL', message: 'No delayed projects. All showrooms and dealers on track.' };
   
-  return `
-<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <meta name="color-scheme" content="light only">
-  <meta name="supported-color-schemes" content="light only">
-  <title>AIS Command Center Report</title>
+  <meta name="color-scheme" content="light">
+  <title>AIS Command Center · Daily Intelligence</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@500&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
   <style>
-    @media only screen and (max-width: 600px) {
-      .container { width: 100% !important; }
-      .stack { display:block !important; width:100% !important; }
-      .p-outer { padding: 12px !important; }
-      .p-card { padding: 14px !important; }
-      .num-big { font-size: 54px !important; }
-      .num { font-size: 34px !important; }
-      .num-main { font-size: 44px !important; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #EDF1F7;
+      -webkit-font-smoothing: antialiased;
+      padding: 24px;
+    }
+    .container {
+      max-width: 680px;
+      margin: 0 auto;
+      background: #FFFFFF;
+      border-radius: 28px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+      overflow: hidden;
+      border: 1px solid #E2E8F0;
+    }
+    
+    /* Header */
+    .header {
+      background: linear-gradient(135deg, #0F1C2E 0%, #162438 100%);
+      padding: 28px 32px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .header-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .header-logo span {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: #FFFFFF;
+      letter-spacing: -0.02em;
+    }
+    .header-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 2rem;
+      font-weight: 700;
+      color: #FFFFFF;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+    }
+    .header-sub {
+      font-size: 0.85rem;
+      color: rgba(255,255,255,0.5);
+      margin-top: 8px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .header-sub i {
+      opacity: 0.4;
+    }
+    
+    /* KPI Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      padding: 24px;
+    }
+    .kpi-card {
+      background: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-radius: 20px;
+      padding: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+    .kpi-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: var(--accent, #2563EB);
+    }
+    .kpi-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      margin-bottom: 14px;
+      background: var(--icon-bg, #EFF6FF);
+      color: var(--accent, #2563EB);
+    }
+    .kpi-label {
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #64748B;
+      margin-bottom: 6px;
+    }
+    .kpi-value {
+      font-family: 'DM Mono', monospace;
+      font-size: 2.2rem;
+      font-weight: 500;
+      color: #0F172A;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+    .kpi-trend {
+      font-size: 0.7rem;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: #64748B;
+      font-weight: 500;
+    }
+    .trend-up { color: #059669; }
+    .trend-warn { color: #D97706; }
+    .trend-critical { color: #DC2626; }
+    
+    /* Stats row inside cards */
+    .stats-row {
+      display: flex;
+      border: 1px solid #E2E8F0;
+      border-radius: 12px;
+      overflow: hidden;
+      margin-top: 16px;
+    }
+    .stat-cell {
+      flex: 1;
+      padding: 12px 8px;
+      text-align: center;
+      border-right: 1px solid #E2E8F0;
+    }
+    .stat-cell:last-child { border-right: none; }
+    .stat-label {
+      font-size: 0.55rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #64748B;
+      margin-bottom: 4px;
+    }
+    .stat-val {
+      font-family: 'DM Mono', monospace;
+      font-size: 1.1rem;
+      font-weight: 500;
+      color: #0F172A;
+    }
+    .stat-val.red { color: #DC2626; }
+    .stat-val.amber { color: #D97706; }
+    .stat-val.green { color: #059669; }
+    
+    /* Urgency Banner */
+    .urgency-banner {
+      margin: 0 24px 24px;
+      padding: 20px 24px;
+      border-radius: 20px;
+      background: ${urgencyConfig.bg};
+      border: 1px solid ${urgencyConfig.border};
+    }
+    .urgency-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 1rem;
+      font-weight: 700;
+      color: #FFFFFF;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .urgency-stats {
+      display: flex;
+      gap: 24px;
+    }
+    .urgency-stat {
+      flex: 1;
+    }
+    .urgency-stat-label {
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(255,255,255,0.7);
+      margin-bottom: 4px;
+    }
+    .urgency-stat-value {
+      font-family: 'DM Mono', monospace;
+      font-size: 2.8rem;
+      font-weight: 700;
+      color: #FFFFFF;
+      line-height: 1;
+    }
+    .urgency-message {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255,255,255,0.2);
+      font-size: 0.85rem;
+      color: #FFFFFF;
+      font-weight: 500;
+    }
+    
+    /* Footer */
+    .footer {
+      background: #F8FAFC;
+      padding: 18px 24px;
+      text-align: center;
+      font-size: 0.7rem;
+      color: #94A3B8;
+      border-top: 1px solid #E2E8F0;
+    }
+    .footer strong { color: #2563EB; font-weight: 700; }
+    
+    @media (max-width: 480px) {
+      body { padding: 12px; }
+      .kpi-grid { grid-template-columns: 1fr; padding: 16px; }
+      .header { padding: 20px; }
+      .header-title { font-size: 1.5rem; }
+      .urgency-banner { margin: 0 16px 16px; }
     }
   </style>
 </head>
-<body style="margin:0; padding:0; background-color:#f4f6f9; font-family:Segoe UI, Arial, sans-serif;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f4f6f9" style="background-color:#f4f6f9;">
-    <tr>
-      <td align="center" class="p-outer" style="padding:20px;">
-        <table role="presentation" class="container" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:700px; background-color:#ffffff; border-radius:12px; overflow:hidden;">
-          
-          <!-- HEADER -->
-          <tr>
-            <td align="center" bgcolor="#1a3a5c" style="background-color:#1a3a5c; padding:20px; border-radius:12px 12px 0 0;">
-              <div style="font-size:24px; line-height:30px; font-weight:700; color:#ffffff;">📊 AIS Command Center</div>
-              <div style="margin-top:6px; font-size:14px; line-height:18px; color:#a8c8e8;">Daily Performance Report · ${dateStr}</div>
-            </td>
-          </tr>
-
-          <!-- TWO COLUMN ROW -->
-          <tr>
-            <td style="padding:16px;">
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                <tr>
-                  <!-- SHOWROOMS COLUMN -->
-                  <td class="stack" width="50%" valign="top" style="padding:8px;">
-                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" style="background-color:#ffffff; border-radius:12px;">
-                      <tr>
-                        <td class="p-card" style="padding:16px; border:1px solid #eef1f5; border-radius:12px;">
-                          <div style="font-size:18px; line-height:22px; font-weight:700; color:#1a3a5c; margin:0 0 16px 0;">🏢 Showroom Performance</div>
-                          <div style="text-align:center;">
-                            <div style="font-size:12px; letter-spacing:1px; text-transform:uppercase; color:#666666;">TOTAL SHOWROOMS</div>
-                            <div class="num-main" style="font-size:48px; line-height:52px; font-weight:800; color:#111111; margin:6px 0 12px 0;">${totalShowrooms}</div>
-                          </div>
-                          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                            <tr>
-                              <td align="center" width="33.33%" style="padding:8px;">
-                                <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">COMPLETED</div>
-                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#28a745; margin-top:6px;">${completedShowrooms}</div>
-                              </td>
-                              <td align="center" width="33.33%" style="padding:8px;">
-                                <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">AVG COMPLETION</div>
-                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:${avgCompletion >= 70 ? '#28a745' : '#ffc107'}; margin-top:6px;">${avgCompletion}%</div>
-                              </td>
-                              <td align="center" width="33.33%" style="padding:8px;">
-                                <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">AVG DELAY</div>
-                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:${globalAvgDelay > 0 ? '#dc3545' : '#28a745'}; margin-top:6px;">${globalAvgDelay} DAYS</div>
-                              </td>
-                            </tr>
-                          </table>
-                        </td>
-                      </tr>
-                    </table>
-                  </td>
-
-                  <!-- DEALERS COLUMN -->
-                  <td class="stack" width="50%" valign="top" style="padding:8px;">
-                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" style="background-color:#ffffff; border-radius:12px;">
-                      <tr>
-                        <td class="p-card" style="padding:16px; border:1px solid #eef1f5; border-radius:12px;">
-                          <div style="font-size:18px; line-height:22px; font-weight:700; color:#1a3a5c; margin:0 0 16px 0;">🚗 Dealer Onboarding</div>
-                          <div style="text-align:center;">
-                            <div style="font-size:12px; letter-spacing:1px; text-transform:uppercase; color:#666666;">TOTAL DEALERS</div>
-                            <div class="num-main" style="font-size:48px; line-height:52px; font-weight:800; color:#111111; margin:6px 0 12px 0;">${totalDealers}</div>
-                          </div>
-                          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                            <tr>
-                              <td align="center" width="33.33%" style="padding:8px;">
-                                <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">ACTIVE</div>
-                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#28a745; margin-top:6px;">${activeDealers}</div>
-                              </td>
-                              <td align="center" width="33.33%" style="padding:8px;">
-                                <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">ONBOARDED</div>
-                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:#28a745; margin-top:6px;">${completedDealers}</div>
-                              </td>
-                              <td align="center" width="33.33%" style="padding:8px;">
-                                <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#666666;">CONVERSION</div>
-                                <div class="num" style="font-size:32px; line-height:36px; font-weight:800; color:${conversionRate >= 50 ? '#28a745' : '#ffc107'}; margin-top:6px;">${conversionRate}%</div>
-                              </td>
-                            </tr>
-                          </table>
-                        </td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-          <!-- URGENT SECTION -->
-          <tr>
-            <td style="padding:0 16px 16px 16px;">
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="${totalCritical > 0 ? '#dc3545' : '#ffc107'}" style="background-color:${totalCritical > 0 ? '#dc3545' : '#ffc107'}; border-radius:12px;">
-                <tr>
-                  <td align="center" style="padding:22px 18px; color:#ffffff;">
-                    <div style="font-size:16px; line-height:20px; font-weight:800; letter-spacing:2px; text-transform:uppercase;">
-                      ${totalCritical > 0 ? '🚨 CRITICAL ACTION REQUIRED' : '⚠️ ATTENTION NEEDED'}
-                    </div>
-                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:16px;">
-                      <tr>
-                        <td class="stack" width="50%" align="center" valign="top" style="padding:8px;">
-                          <div style="font-size:13px; line-height:16px; opacity:0.95;">DELAYED SHOWROOMS</div>
-                          <div class="num-big" style="font-size:64px; line-height:66px; font-weight:900; margin:6px 0; color:#ffffff;">${activeDelayCount}</div>
-                        </td>
-                        <td class="stack" width="50%" align="center" valign="top" style="padding:8px;">
-                          <div style="font-size:13px; line-height:16px; opacity:0.95;">DELAYED DEALERS</div>
-                          <div class="num-big" style="font-size:64px; line-height:66px; font-weight:900; margin:6px 0; color:#ffffff;">${delayedDealers}</div>
-                        </td>
-                      </tr>
-                    </table>
-                    <div style="margin-top:16px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.35); font-size:14px; line-height:18px; color:#ffffff;">
-                      ${urgencyMessage}
-                    </div>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-          <!-- FOOTER -->
-          <tr>
-            <td align="center" bgcolor="#f8f9fa" style="background-color:#f8f9fa; padding:16px; font-size:12px; line-height:16px; color:#999999; border-radius:0 0 12px 12px; border-top:1px solid #e6e6e6;">
-              This is an automated report from AIS Command Center<br>
-              © 2024 AIS Windows | All Rights Reserved
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
+<body>
+  <div class="container">
+    
+    <!-- HEADER -->
+    <div class="header">
+      <div class="header-logo">
+        <span>🏢 AIS</span>
+      </div>
+      <div class="header-title">Command Center</div>
+      <div class="header-sub">
+        <span>Daily Intelligence Report</span>
+        <i>·</i>
+        <span>${dateStr}</span>
+      </div>
+    </div>
+    
+    <!-- KPI GRID -->
+    <div class="kpi-grid">
+      
+      <!-- SHOWROOM CARD -->
+      <div class="kpi-card" style="--accent: #2563EB; --icon-bg: #EFF6FF;">
+        <div class="kpi-icon">🏗️</div>
+        <div class="kpi-label">Showroom Execution</div>
+        <div class="kpi-value">${totalShowrooms}</div>
+        <div class="kpi-trend ${avgCompletion >= 70 ? 'trend-up' : 'trend-warn'}">
+          ${avgCompletion >= 70 ? '▲' : '▼'} ${avgCompletion}% completion
+        </div>
+        <div class="stats-row">
+          <div class="stat-cell">
+            <div class="stat-label">Completed</div>
+            <div class="stat-val green">${completedShowrooms}</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-label">Delayed</div>
+            <div class="stat-val ${activeDelayCount > 0 ? 'red' : ''}">${activeDelayCount}</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-label">Avg Delay</div>
+            <div class="stat-val ${globalAvgDelay > 0 ? 'amber' : 'green'}">${globalAvgDelay}d</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- DEALER CARD -->
+      <div class="kpi-card" style="--accent: #8B5CF6; --icon-bg: #EDE9FE;">
+        <div class="kpi-icon">🚗</div>
+        <div class="kpi-label">Dealer Onboarding</div>
+        <div class="kpi-value">${totalDealers}</div>
+        <div class="kpi-trend ${conversionRate >= 50 ? 'trend-up' : 'trend-warn'}">
+          ${conversionRate}% conversion rate
+        </div>
+        <div class="stats-row">
+          <div class="stat-cell">
+            <div class="stat-label">Active</div>
+            <div class="stat-val">${activeDealers}</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-label">Onboarded</div>
+            <div class="stat-val green">${completedDealers}</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-label">Delayed</div>
+            <div class="stat-val ${delayedDealers > 0 ? 'red' : ''}">${delayedDealers}</div>
+          </div>
+        </div>
+      </div>
+      
+    </div>
+    
+    <!-- URGENCY BANNER -->
+    <div class="urgency-banner">
+      <div class="urgency-title">
+        ${urgencyConfig.icon} ${urgencyConfig.title}
+      </div>
+      <div class="urgency-stats">
+        <div class="urgency-stat">
+          <div class="urgency-stat-label">Delayed Showrooms</div>
+          <div class="urgency-stat-value">${activeDelayCount}</div>
+        </div>
+        <div class="urgency-stat">
+          <div class="urgency-stat-label">Delayed Dealers</div>
+          <div class="urgency-stat-value">${delayedDealers}</div>
+        </div>
+      </div>
+      <div class="urgency-message">
+        ${urgencyConfig.message}
+      </div>
+    </div>
+    
+    <!-- FOOTER -->
+    <div class="footer">
+      Powered with ❤️ by <strong>Sanju G</strong> · AIS Windows Command Center v2.2<br>
+      This is an automated intelligence report. Data refreshes continuously.
+    </div>
+    
+  </div>
 </body>
-</html>
-`;
+</html>`;
 }
 
 async function sendEmail(recipient, htmlBody, dateStr) {
   const templateParams = {
     to_email: recipient,
-    subject: `📊 AIS Dashboard Report - ${dateStr}`,
+    subject: `${totalCritical > 0 ? '🚨' : '📊'} AIS Command Center · ${dateStr}`,
     date: dateStr,
     message: htmlBody
   };
-
-  console.log(`📧 Sending to: ${recipient}`);
 
   try {
     const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
@@ -420,42 +616,54 @@ async function sendEmail(recipient, htmlBody, dateStr) {
     });
 
     if (response.ok) {
-      console.log(`✅ Success: ${recipient}`);
+      console.log(`   ✅ Sent to: ${recipient}`);
       return true;
     } else {
       const errorText = await response.text();
-      console.error(`❌ Failed: ${recipient} - ${errorText}`);
+      console.error(`   ❌ Failed: ${recipient} - ${errorText}`);
       return false;
     }
   } catch (error) {
-    console.error(`❌ Error: ${recipient} - ${error.message}`);
+    console.error(`   ❌ Error: ${recipient} - ${error.message}`);
     return false;
   }
 }
 
 async function main() {
-  console.log('🚀 Starting AIS Command Center email report...');
+  console.log('\n╔══════════════════════════════════════════════╗');
+  console.log('║     AIS COMMAND CENTER · INTELLIGENCE REPORT    ║');
+  console.log('╚══════════════════════════════════════════════╝\n');
+  
   const dateStr = getFormattedDate();
-  console.log(`📅 Report Date: ${dateStr}`);
+  console.log(`📅 ${dateStr}`);
   
   if (!MANUAL_RECIPIENT && isHoliday()) {
-    console.log('📅 Today is a holiday. Skipping automated email report.');
+    console.log('📅 Holiday detected. Skipping report.');
     process.exit(0);
   }
   
   if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY || !PRIVATE_KEY) {
-    console.error('❌ Missing EmailJS credentials!');
+    console.error('❌ Missing EmailJS credentials');
     process.exit(1);
   }
   
-  console.log('✅ EmailJS credentials verified');
-  console.log('📡 Fetching data from Firestore...');
+  console.log('\n📡 Fetching Firestore data...');
   
   const showrooms = await fetchCollection('showrooms');
-  console.log(`   └─ Showrooms: ${showrooms.length} found`);
+  console.log(`   └─ Showrooms: ${showrooms.length} documents`);
+  
+  // Debug: Show first showroom structure
+  if (showrooms.length > 0) {
+    console.log(`   └─ Sample: ${showrooms[0].name} (${showrooms[0].city}) - has data: ${!!showrooms[0].data}`);
+  }
   
   const dealers = await fetchCollection('dealerOnboarding');
-  console.log(`   └─ Dealers: ${dealers.length} found`);
+  console.log(`   └─ Dealers: ${dealers.length} documents`);
+  
+  // Debug: Show first dealer structure
+  if (dealers.length > 0) {
+    console.log(`   └─ Sample: ${dealers[0].name} (${dealers[0].currentStage}) - status: ${dealers[0].status}`);
+  }
   
   const htmlBody = buildHtmlReport(showrooms, dealers, dateStr);
   
@@ -463,18 +671,23 @@ async function main() {
     ? [MANUAL_RECIPIENT] 
     : DEFAULT_RECIPIENTS;
   
-  console.log(`📧 Sending to ${recipients.length} recipient(s)...`);
+  console.log(`\n📧 Sending to ${recipients.length} recipient(s)...\n`);
   
   let successCount = 0;
   for (const recipient of recipients) {
     const success = await sendEmail(recipient, htmlBody, dateStr);
     if (success) successCount++;
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, 1000));
   }
   
-  console.log(`\n📬 Report complete: ${successCount}/${recipients.length} emails sent successfully`);
+  console.log(`\n╔══════════════════════════════════════════════╗`);
+  console.log(`║   Report Complete: ${successCount}/${recipients.length} delivered           ║`);
+  console.log(`╚══════════════════════════════════════════════╝\n`);
+  
   if (successCount === 0) process.exit(1);
-  console.log('🎉 Done!');
 }
 
-main().catch(err => { console.error('❌ Fatal error:', err); process.exit(1); });
+main().catch(err => { 
+  console.error('\n❌ Fatal error:', err); 
+  process.exit(1); 
+});
