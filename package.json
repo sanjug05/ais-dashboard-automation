@@ -1,10 +1,7 @@
 {
   "name": "ais-dashboard-automation",
   "version": "1.0.0",
-  "type": "module",
+  "type": "commonjs",
   "description": "AIS Command Center Daily Intelligence Report",
-  "main": "send-daily-email.js",
-  "dependencies": {
-    "firebase-admin": "11.11.0"
-  }
+  "main": "send-daily-email.js"
 }
