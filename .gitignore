@@ -1,0 +1,22 @@
+# Service account credentials - NEVER COMMIT
+service-account.json
+*-service-account.json
+firebase-service-account.json
+
+# Environment variables
+.env
+.env.local
+
+# Dependencies
+node_modules/
+
+# Debug files
+test-*.js
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
