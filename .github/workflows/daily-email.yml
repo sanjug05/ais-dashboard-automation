@@ -7,12 +7,12 @@ on:
 
 jobs:
   send-report:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       
       - name: Run report
-        run: FORCE_RUN=true node send-daily-email.js
+        run: NODE_OPTIONS='--openssl-legacy-provider' FORCE_RUN=true node send-daily-email.js
         env:
           EMAILJS_SERVICE_ID: ${{ secrets.EMAILJS_SERVICE_ID }}
           EMAILJS_TEMPLATE_ID: ${{ secrets.EMAILJS_TEMPLATE_ID }}
