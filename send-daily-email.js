@@ -1,12 +1,19 @@
-// send-daily-email.js - AUTHENTICATED VERSION
+// send-daily-email.js - FIREBASE ADMIN SDK VERSION
+// Requires service account for authenticated access
+
+import { initializeApp, cert } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
 const PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY;
 const PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY;
 const MANUAL_RECIPIENT = process.env.MANUAL_RECIPIENT;
 
-// Add Firebase API Key for authenticated REST calls
-const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || 'AIzaSyDav3rI7fTr8KrXYxvnz5LB82CgjRq4v20';
+// Path to your service account JSON file
+const SERVICE_ACCOUNT_PATH = process.env.SERVICE_ACCOUNT_PATH || './service-account.json';
 
 const DEFAULT_RECIPIENTS = [
   'sanju.gupta@aisglass.com',
@@ -14,8 +21,6 @@ const DEFAULT_RECIPIENTS = [
   'krishna.verma@aisglass.com',
   'nidhi.tiwari@aisglass.com'
 ];
-
-const FIRESTORE_URL = 'https://firestore.googleapis.com/v1/projects/ais-showroom-dashboard/databases/(default)/documents';
 
 // Exact match with dashboard PHASES_CONFIG (v2.2)
 const PHASES_CONFIG = [
@@ -43,7 +48,7 @@ const DELAY_THRESHOLDS = {
   CRITICAL: 10
 };
 
-// Global variables for report data (fixes scoping issue)
+// Global report data
 let reportData = {
   totalShowrooms: 0,
   completedShowrooms: 0,
@@ -61,63 +66,50 @@ let reportData = {
   totalDelayedProjects: 0
 };
 
-function parseFirestoreValue(value) {
-  if (value === undefined || value === null) return null;
-  
-  if (value.stringValue !== undefined) return value.stringValue;
-  if (value.integerValue !== undefined) return parseInt(value.integerValue);
-  if (value.doubleValue !== undefined) return parseFloat(value.doubleValue);
-  if (value.booleanValue !== undefined) return value.booleanValue;
-  if (value.nullValue !== undefined) return null;
-  if (value.timestampValue !== undefined) return value.timestampValue;
-  
-  if (value.mapValue && value.mapValue.fields) {
-    const obj = {};
-    for (const [key, val] of Object.entries(value.mapValue.fields)) {
-      obj[key] = parseFirestoreValue(val);
-    }
-    return obj;
+let db = null;
+
+// Initialize Firebase Admin
+async function initFirebase() {
+  try {
+    // Try to read service account file
+    const serviceAccount = JSON.parse(readFileSync(SERVICE_ACCOUNT_PATH, 'utf8'));
+    
+    initializeApp({
+      credential: cert(serviceAccount),
+      projectId: 'ais-showroom-dashboard'
+    });
+    
+    db = getFirestore();
+    console.log('✅ Firebase Admin initialized successfully');
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to initialize Firebase Admin:', error.message);
+    console.log('\n📋 To fix this:');
+    console.log('1. Go to Firebase Console > Project Settings > Service Accounts');
+    console.log('2. Click "Generate New Private Key"');
+    console.log('3. Save the JSON file as "service-account.json" in this directory');
+    console.log('4. Or set SERVICE_ACCOUNT_PATH environment variable\n');
+    return false;
   }
-  
-  if (value.arrayValue && value.arrayValue.values) {
-    return value.arrayValue.values.map(v => parseFirestoreValue(v));
-  }
-  
-  return null;
 }
 
-// FIXED: Add authentication to Firestore REST calls
+// Fetch collection using Admin SDK
 async function fetchCollection(collectionName) {
+  if (!db) {
+    console.error(`   ❌ Database not initialized`);
+    return [];
+  }
+  
   try {
-    // Firestore REST API requires authentication via query parameter
-    const url = `${FIRESTORE_URL}/${collectionName}?key=${FIREBASE_API_KEY}`;
-    
     console.log(`   Fetching: ${collectionName}...`);
-    const response = await fetch(url);
+    const snapshot = await db.collection(collectionName).get();
     
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`   ❌ HTTP ${response.status}: ${errorText.substring(0, 200)}`);
-      return [];
-    }
-    
-    const data = await response.json();
-    
-    if (!data.documents) {
-      console.log(`   ⚠️ No documents found in ${collectionName}`);
-      return [];
-    }
-    
-    const docs = data.documents.map(doc => {
-      const result = { id: doc.name.split('/').pop() };
-      
-      if (doc.fields) {
-        for (const [key, value] of Object.entries(doc.fields)) {
-          result[key] = parseFirestoreValue(value);
-        }
-      }
-      
-      return result;
+    const docs = [];
+    snapshot.forEach(doc => {
+      docs.push({
+        id: doc.id,
+        ...doc.data()
+      });
     });
     
     console.log(`   ✅ ${collectionName}: ${docs.length} documents`);
@@ -238,25 +230,43 @@ function isHoliday() {
   return false;
 }
 
-// FIXED: Calculate and store in global reportData
 function calculateReportData(showrooms, dealers) {
+  // Reset report data
+  reportData = {
+    totalShowrooms: 0,
+    completedShowrooms: 0,
+    activeDelayCount: 0,
+    criticalShowrooms: 0,
+    avgCompletion: 0,
+    globalAvgDelay: 0,
+    totalDealers: 0,
+    activeDealers: 0,
+    completedDealers: 0,
+    delayedDealers: 0,
+    criticalDealers: 0,
+    conversionRate: 0,
+    totalCritical: 0,
+    totalDelayedProjects: 0
+  };
+  
   // Showroom stats
   reportData.totalShowrooms = showrooms.length;
   let totalPct = 0;
+  let totalAvgDelaySum = 0;
   
   for (const showroom of showrooms) {
     const stats = calculateShowroomStats(showroom);
     totalPct += stats.pct;
     if (stats.pct === 100) reportData.completedShowrooms++;
     if (stats.maxDelay > 0) {
-      reportData.globalAvgDelay += stats.avgDelay;
+      totalAvgDelaySum += stats.avgDelay;
       reportData.activeDelayCount++;
     }
     if (stats.maxDelay >= DELAY_THRESHOLDS.CRITICAL) reportData.criticalShowrooms++;
   }
   
   reportData.avgCompletion = reportData.totalShowrooms > 0 ? Math.round(totalPct / reportData.totalShowrooms) : 0;
-  reportData.globalAvgDelay = reportData.activeDelayCount > 0 ? Math.round(reportData.globalAvgDelay / reportData.activeDelayCount) : 0;
+  reportData.globalAvgDelay = reportData.activeDelayCount > 0 ? Math.round(totalAvgDelaySum / reportData.activeDelayCount) : 0;
   
   // Dealer stats
   reportData.totalDealers = dealers.length;
@@ -411,7 +421,6 @@ function buildHtmlReport(dateStr) {
     }
     .trend-up { color: #059669; }
     .trend-warn { color: #D97706; }
-    .trend-critical { color: #DC2626; }
     .stats-row {
       display: flex;
       border: 1px solid #E2E8F0;
@@ -513,9 +522,7 @@ function buildHtmlReport(dateStr) {
 <body>
   <div class="container">
     <div class="header">
-      <div class="header-logo">
-        <span>🏢 AIS</span>
-      </div>
+      <div class="header-logo"><span>🏢 AIS</span></div>
       <div class="header-title">Command Center</div>
       <div class="header-sub">
         <span>Daily Intelligence Report</span>
@@ -532,18 +539,9 @@ function buildHtmlReport(dateStr) {
           ${reportData.avgCompletion >= 70 ? '▲' : '▼'} ${reportData.avgCompletion}% completion
         </div>
         <div class="stats-row">
-          <div class="stat-cell">
-            <div class="stat-label">Completed</div>
-            <div class="stat-val green">${reportData.completedShowrooms}</div>
-          </div>
-          <div class="stat-cell">
-            <div class="stat-label">Delayed</div>
-            <div class="stat-val ${reportData.activeDelayCount > 0 ? 'red' : ''}">${reportData.activeDelayCount}</div>
-          </div>
-          <div class="stat-cell">
-            <div class="stat-label">Avg Delay</div>
-            <div class="stat-val ${reportData.globalAvgDelay > 0 ? 'amber' : 'green'}">${reportData.globalAvgDelay}d</div>
-          </div>
+          <div class="stat-cell"><div class="stat-label">Completed</div><div class="stat-val green">${reportData.completedShowrooms}</div></div>
+          <div class="stat-cell"><div class="stat-label">Delayed</div><div class="stat-val ${reportData.activeDelayCount > 0 ? 'red' : ''}">${reportData.activeDelayCount}</div></div>
+          <div class="stat-cell"><div class="stat-label">Avg Delay</div><div class="stat-val ${reportData.globalAvgDelay > 0 ? 'amber' : 'green'}">${reportData.globalAvgDelay}d</div></div>
         </div>
       </div>
       <div class="kpi-card" style="--accent: #8B5CF6; --icon-bg: #EDE9FE;">
@@ -551,52 +549,32 @@ function buildHtmlReport(dateStr) {
         <div class="kpi-label">Dealer Onboarding</div>
         <div class="kpi-value">${reportData.totalDealers}</div>
         <div class="kpi-trend ${reportData.conversionRate >= 50 ? 'trend-up' : 'trend-warn'}">
-          ${reportData.conversionRate}% conversion rate
+          ${reportData.conversionRate}% conversion
         </div>
         <div class="stats-row">
-          <div class="stat-cell">
-            <div class="stat-label">Active</div>
-            <div class="stat-val">${reportData.activeDealers}</div>
-          </div>
-          <div class="stat-cell">
-            <div class="stat-label">Onboarded</div>
-            <div class="stat-val green">${reportData.completedDealers}</div>
-          </div>
-          <div class="stat-cell">
-            <div class="stat-label">Delayed</div>
-            <div class="stat-val ${reportData.delayedDealers > 0 ? 'red' : ''}">${reportData.delayedDealers}</div>
-          </div>
+          <div class="stat-cell"><div class="stat-label">Active</div><div class="stat-val">${reportData.activeDealers}</div></div>
+          <div class="stat-cell"><div class="stat-label">Onboarded</div><div class="stat-val green">${reportData.completedDealers}</div></div>
+          <div class="stat-cell"><div class="stat-label">Delayed</div><div class="stat-val ${reportData.delayedDealers > 0 ? 'red' : ''}">${reportData.delayedDealers}</div></div>
         </div>
       </div>
     </div>
     <div class="urgency-banner">
-      <div class="urgency-title">
-        ${urgencyConfig.icon} ${urgencyConfig.title}
-      </div>
+      <div class="urgency-title">${urgencyConfig.icon} ${urgencyConfig.title}</div>
       <div class="urgency-stats">
-        <div class="urgency-stat">
-          <div class="urgency-stat-label">Delayed Showrooms</div>
-          <div class="urgency-stat-value">${reportData.activeDelayCount}</div>
-        </div>
-        <div class="urgency-stat">
-          <div class="urgency-stat-label">Delayed Dealers</div>
-          <div class="urgency-stat-value">${reportData.delayedDealers}</div>
-        </div>
+        <div class="urgency-stat"><div class="urgency-stat-label">Delayed Showrooms</div><div class="urgency-stat-value">${reportData.activeDelayCount}</div></div>
+        <div class="urgency-stat"><div class="urgency-stat-label">Delayed Dealers</div><div class="urgency-stat-value">${reportData.delayedDealers}</div></div>
       </div>
-      <div class="urgency-message">
-        ${urgencyConfig.message}
-      </div>
+      <div class="urgency-message">${urgencyConfig.message}</div>
     </div>
     <div class="footer">
       Powered with ❤️ by <strong>Sanju G</strong> · AIS Windows Command Center v2.2<br>
-      This is an automated intelligence report. Data refreshes continuously.
+      Automated intelligence report · Data refreshes continuously
     </div>
   </div>
 </body>
 </html>`;
 }
 
-// FIXED: Use reportData instead of undefined variables
 async function sendEmail(recipient, htmlBody, dateStr) {
   const subject = reportData.totalCritical > 0 
     ? `🚨 CRITICAL · AIS Command Center · ${dateStr}`
@@ -656,32 +634,30 @@ async function main() {
     process.exit(1);
   }
   
+  // Initialize Firebase
+  const initialized = await initFirebase();
+  if (!initialized) {
+    process.exit(1);
+  }
+  
   console.log('\n📡 Fetching Firestore data...');
   
   const showrooms = await fetchCollection('showrooms');
   const dealers = await fetchCollection('dealerOnboarding');
   
-  // Debug: Show sample data if available
+  // Debug output
   if (showrooms.length > 0) {
     console.log(`\n📋 Sample Showroom:`);
     console.log(`   Name: ${showrooms[0].name}`);
-    console.log(`   City: ${showrooms[0].city}`);
-    console.log(`   Start Date: ${showrooms[0].startDate}`);
     console.log(`   Has data field: ${!!showrooms[0].data}`);
-    if (showrooms[0].data) {
-      console.log(`   Phase keys: ${Object.keys(showrooms[0].data).join(', ')}`);
-    }
   }
   
   if (dealers.length > 0) {
     console.log(`\n📋 Sample Dealer:`);
     console.log(`   Name: ${dealers[0].name}`);
     console.log(`   Status: ${dealers[0].status}`);
-    console.log(`   Stage: ${dealers[0].currentStage}`);
-    console.log(`   Start Date: ${dealers[0].startDate}`);
   }
   
-  // Calculate all report data
   calculateReportData(showrooms, dealers);
   
   const htmlBody = buildHtmlReport(dateStr);
@@ -703,7 +679,7 @@ async function main() {
   console.log(`║   Report Complete: ${successCount}/${recipients.length} delivered           ║`);
   console.log(`╚══════════════════════════════════════════════╝\n`);
   
-  if (successCount === 0) process.exit(1);
+  process.exit(successCount === 0 ? 1 : 0);
 }
 
 main().catch(err => { 
