@@ -1,7 +1,8 @@
 name: Daily Intelligence Report
+
 on:
   schedule:
-    - cron: '30 1 * * *'  # 7:00 AM IST
+    - cron: '30 1 * * *'
   workflow_dispatch:
 
 jobs:
@@ -9,11 +10,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install firebase-admin
-      - run: FORCE_RUN=true node send-daily-email.js  # Added FORCE_RUN
+      
+      - name: Install dependencies
+        run: |
+          npm install firebase-admin
+          npm install google-auth-library
+      
+      - name: Run report
+        run: FORCE_RUN=true node send-daily-email.js
         env:
           EMAILJS_SERVICE_ID: ${{ secrets.EMAILJS_SERVICE_ID }}
           EMAILJS_TEMPLATE_ID: ${{ secrets.EMAILJS_TEMPLATE_ID }}
