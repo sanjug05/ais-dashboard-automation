@@ -9,21 +9,10 @@
     "send-report-force": "FORCE_RUN=true node send-daily-email.js"
   },
   "dependencies": {
-    "firebase-admin": "^12.0.0"
+    "firebase-admin": "^12.0.0",
+    "google-auth-library": "^9.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
-  }
-}
-{
-  "name": "ais-dashboard-automation",
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "send-report": "node send-daily-email.js"
-  },
-  "dependencies": {
-    "firebase-admin": "^12.0.0",
-    "google-auth-library": "^9.0.0"
   }
 }
