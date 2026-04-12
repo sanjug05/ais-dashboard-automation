@@ -7,35 +7,23 @@ on:
 
 jobs:
   send-report:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       
-      - name: Debug - List files
-        run: |
-          echo "=== Repository files ==="
-          ls -la
-          echo ""
-          echo "=== package.json content ==="
-          cat package.json
-      
       - uses: actions/setup-node@v4
         with:
-          node-version: '18.17.0'
+          node-version: '18'
       
       - name: Install dependencies
-        run: |
-          npm install
-          echo ""
-          echo "=== node_modules contents ==="
-          ls -la node_modules | head -20
+        run: npm install
       
       - name: Run report
-        run: NODE_OPTIONS='--openssl-legacy-provider' FORCE_RUN=true node send-daily-email.js
+        run: FORCE_RUN=true node send-daily-email.js
         env:
           EMAILJS_SERVICE_ID: ${{ secrets.EMAILJS_SERVICE_ID }}
           EMAILJS_TEMPLATE_ID: ${{ secrets.EMAILJS_TEMPLATE_ID }}
           EMAILJS_PUBLIC_KEY: ${{ secrets.EMAILJS_PUBLIC_KEY }}
           EMAILJS_PRIVATE_KEY: ${{ secrets.EMAILJS_PRIVATE_KEY }}
-          FIREBASE_CLIENT_EMAIL: ${{ secrets.EMAILJS_CLIENT_EMAIL }}
+          FIREBASE_CLIENT_EMAIL: ${{ secrets.FIREBASE_CLIENT_EMAIL }}
           FIREBASE_PRIVATE_KEY: ${{ secrets.FIREBASE_PRIVATE_KEY }}
