@@ -1,6 +1,12 @@
-// send-daily-email.js - FIXED PRIVATE KEY PARSING
+// send-daily-email.js - WITH FALLBACK TO SERVICE ACCOUNT FILE
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { readFileSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
 const TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID;
@@ -48,44 +54,77 @@ let reportData = {
 
 let db = null;
 
-// FIXED: Properly format private key for Firebase Admin
 function formatPrivateKey(key) {
   if (!key) return null;
   
-  // If key already has proper PEM format, return as-is
-  if (key.includes('-----BEGIN PRIVATE KEY-----') && key.includes('-----END PRIVATE KEY-----')) {
-    // Handle various escaped formats
-    return key.replace(/\\n/g, '\n').replace(/\\r/g, '\r');
+  // If key is too short, it's probably malformed
+  if (key.length < 500) {
+    console.error('   ⚠️  Private key is too short (' + key.length + ' chars). Expected ~1700+ chars.');
+    console.error('   The key may have been truncated when pasting.');
+    return null;
   }
   
-  // If key is base64 or raw, wrap it
-  return `-----BEGIN PRIVATE KEY-----\n${key}\n-----END PRIVATE KEY-----`;
+  // Handle various escaped formats
+  return key.replace(/\\n/g, '\n').replace(/\\r/g, '\r');
 }
 
 async function initFirebase() {
   try {
-    if (!FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
-      console.error('❌ Missing Firebase credentials in environment variables');
-      console.log('   FIREBASE_CLIENT_EMAIL:', FIREBASE_CLIENT_EMAIL ? '✓ Present' : '✗ Missing');
-      console.log('   FIREBASE_PRIVATE_KEY:', FIREBASE_PRIVATE_KEY ? '✓ Present (length: ' + FIREBASE_PRIVATE_KEY.length + ')' : '✗ Missing');
+    let credentials = null;
+    
+    // Option 1: Try environment variables
+    if (FIREBASE_CLIENT_EMAIL && FIREBASE_PRIVATE_KEY) {
+      const formattedKey = formatPrivateKey(FIREBASE_PRIVATE_KEY);
+      
+      if (formattedKey && formattedKey.includes('BEGIN PRIVATE KEY')) {
+        console.log('   Using credentials from environment variables');
+        credentials = {
+          projectId: FIREBASE_PROJECT_ID,
+          clientEmail: FIREBASE_CLIENT_EMAIL,
+          privateKey: formattedKey
+        };
+      } else {
+        console.log('   ⚠️  Environment variable key appears malformed');
+      }
+    }
+    
+    // Option 2: Fallback to service-account.json file (local development only)
+    if (!credentials) {
+      const serviceAccountPath = join(__dirname, 'service-account.json');
+      console.log('   Trying fallback to:', serviceAccountPath);
+      
+      if (existsSync(serviceAccountPath)) {
+        try {
+          const serviceAccount = JSON.parse(readFileSync(serviceAccountPath, 'utf8'));
+          credentials = {
+            projectId: serviceAccount.project_id,
+            clientEmail: serviceAccount.client_email,
+            privateKey: serviceAccount.private_key
+          };
+          console.log('   ✅ Using credentials from service-account.json');
+        } catch (e) {
+          console.error('   ❌ Failed to parse service-account.json:', e.message);
+        }
+      } else {
+        console.log('   ⚠️  service-account.json not found');
+      }
+    }
+    
+    if (!credentials) {
+      console.error('\n❌ No valid Firebase credentials found.');
+      console.log('\n📋 To fix this:');
+      console.log('Option 1 (Production): Set FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY in environment');
+      console.log('Option 2 (Local): Place service-account.json in the project directory\n');
       return false;
     }
-
-    const formattedKey = formatPrivateKey(FIREBASE_PRIVATE_KEY);
     
-    // Debug: Show key format (safely)
-    console.log('   Private key format check:');
-    console.log('   - Contains BEGIN marker:', formattedKey.includes('BEGIN PRIVATE KEY'));
-    console.log('   - Contains END marker:', formattedKey.includes('END PRIVATE KEY'));
-    console.log('   - Total length:', formattedKey.length);
+    console.log('   Project ID:', credentials.projectId);
+    console.log('   Client Email:', credentials.clientEmail);
+    console.log('   Private Key length:', credentials.privateKey.length);
 
     initializeApp({
-      credential: cert({
-        projectId: FIREBASE_PROJECT_ID,
-        clientEmail: FIREBASE_CLIENT_EMAIL,
-        privateKey: formattedKey
-      }),
-      projectId: FIREBASE_PROJECT_ID
+      credential: cert(credentials),
+      projectId: credentials.projectId
     });
 
     db = getFirestore();
@@ -93,10 +132,6 @@ async function initFirebase() {
     return true;
   } catch (error) {
     console.error('❌ Failed to initialize Firebase Admin:', error.message);
-    console.log('\n📋 Troubleshooting:');
-    console.log('1. Make sure the private key includes BEGIN and END markers');
-    console.log('2. If using GitHub Secrets, paste the ENTIRE key including markers');
-    console.log('3. Try copying directly from the service-account.json file');
     return false;
   }
 }
@@ -318,6 +353,10 @@ async function main() {
   console.log('\n📡 Fetching data...');
   const showrooms = await fetchCollection('showrooms');
   const dealers = await fetchCollection('dealerOnboarding');
+  
+  if (showrooms.length === 0 && dealers.length === 0) {
+    console.log('\n⚠️  No data found in Firestore. Check your database.');
+  }
   
   calculateReportData(showrooms, dealers);
   const htmlBody = buildHtmlReport(dateStr);
