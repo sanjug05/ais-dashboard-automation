@@ -7,21 +7,21 @@ on:
 
 jobs:
   send-report:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # Use older Ubuntu for better compatibility
     steps:
       - uses: actions/checkout@v4
       
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'  # Changed from 20 to 18
+          node-version: '18.17.0'  # Specific version known to work
       
       - name: Install dependencies
         run: |
-          npm install firebase-admin
-          npm install google-auth-library
+          npm install firebase-admin@11.11.1
+          npm install google-auth-library@8.9.0
       
       - name: Run report
-        run: FORCE_RUN=true node send-daily-email.js
+        run: NODE_OPTIONS='--openssl-legacy-provider' FORCE_RUN=true node send-daily-email.js
         env:
           EMAILJS_SERVICE_ID: ${{ secrets.EMAILJS_SERVICE_ID }}
           EMAILJS_TEMPLATE_ID: ${{ secrets.EMAILJS_TEMPLATE_ID }}
