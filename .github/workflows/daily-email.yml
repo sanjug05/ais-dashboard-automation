@@ -1,8 +1,8 @@
-name: Daily Intelligence Report
+name: Weekly Intelligence Report
 
 on:
   schedule:
-    - cron: '30 1 * * *'
+    - cron: '30 1 * * 1'
   workflow_dispatch:
 
 jobs:
